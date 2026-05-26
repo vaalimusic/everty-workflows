@@ -1,0 +1,641 @@
+name: Generator Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      token:
+        description: 'Build token (from server)'
+        required: true
+        type: string
+      genurl:
+        description: 'API server base URL'
+        required: false
+        type: string
+      version:
+        description: 'RustDesk version tag (e.g. 1.4.6) or "master"'
+        required: false
+        default: 'master'
+        type: string
+
+env:
+  SCITER_RUST_VERSION: "1.75"
+  RUST_VERSION: "1.75"
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VERSION: "${{ inputs.version || 'master' }}"
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+    with:
+      version: ${{ inputs.version || 'master' }}
+
+  build-windows:
+    name: Build Windows Client
+    needs: [generate-bridge]
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch build params
+        id: params
+        shell: bash
+        run: |
+          GENURL="${{ inputs.genurl || secrets.GENURL }}"
+          TOKEN="${{ inputs.token }}"
+
+          RESPONSE=$(curl -s -f --retry 3 --retry-delay 5 "${GENURL}/admin/client-build/get-params?token=${TOKEN}") || {
+            echo "Failed to fetch build params from ${GENURL}"
+            exit 1
+          }
+
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"                    >> $GITHUB_ENV
+          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"             >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"                   >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                       >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                             >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"                 >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"               >> $GITHUB_ENV
+          echo "LOGO_URL=$(echo $RESPONSE | jq -r '.logo_url // ""')"               >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                                >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                              >> $GITHUB_ENV
+
+          CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
+          echo "CUSTOM_JSON=${CUSTOM}"                                               >> $GITHUB_ENV
+          echo "CONN_TYPE=$(echo $CUSTOM | jq -r '.conn_type // "both"')"           >> $GITHUB_ENV
+          echo "DISABLE_INSTALL=$(echo $CUSTOM | jq -r '.disable_installation // false')" >> $GITHUB_ENV
+          echo "DISABLE_SETTINGS=$(echo $CUSTOM | jq -r '.disable_settings // false')"    >> $GITHUB_ENV
+          echo "PERM_PASSWORD=$(echo $CUSTOM | jq -r '.permanent_password // ""')"        >> $GITHUB_ENV
+          echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // "https://rustdesk.com"')"   >> $GITHUB_ENV
+          echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // "https://rustdesk.com/download"')" >> $GITHUB_ENV
+          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix // true')"                   >> $GITHUB_ENV
+          echo "CYCLE_MONITOR=$(echo $CUSTOM | jq -r '.cycle_monitor // false')"          >> $GITHUB_ENV
+          echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
+          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif // true')" >> $GITHUB_ENV
+          echo "SETTINGS_MODE=$(echo $CUSTOM | jq -r '.settings_mode // "default"')"      >> $GITHUB_ENV
+          echo "ACCESS_MODE=$(echo $CUSTOM | jq -r '.access_mode // "custom"')"           >> $GITHUB_ENV
+          echo "APPROVE_MODE=$(echo $CUSTOM | jq -r '.approve_mode // "password-click"')" >> $GITHUB_ENV
+          echo "VERIF_METHOD=$(echo $CUSTOM | jq -r '.verification_method // "use-both-passwords"')" >> $GITHUB_ENV
+          echo "HIDE_CM=$(echo $CUSTOM | jq -r '.hide_cm // false')"                      >> $GITHUB_ENV
+          echo "REMOVE_WALLPAPER=$(echo $CUSTOM | jq -r '.remove_wallpaper // true')"     >> $GITHUB_ENV
+          echo "THEME=$(echo $CUSTOM | jq -r '.theme // "system"')"                       >> $GITHUB_ENV
+          echo "THEME_MODE=$(echo $CUSTOM | jq -r '.theme_mode // "default"')"            >> $GITHUB_ENV
+          echo "ENABLE_LAN=$(echo $CUSTOM | jq -r '.enable_lan_discovery // true')"       >> $GITHUB_ENV
+          echo "AUTO_DISCONNECT=$(echo $CUSTOM | jq -r '.allow_auto_disconnect // false')" >> $GITHUB_ENV
+          echo "ENABLE_KB=$(echo $CUSTOM | jq -r '.enable_keyboard // true')"             >> $GITHUB_ENV
+          echo "ENABLE_CB=$(echo $CUSTOM | jq -r '.enable_clipboard // true')"            >> $GITHUB_ENV
+          echo "ENABLE_FT=$(echo $CUSTOM | jq -r '.enable_file_transfer // true')"        >> $GITHUB_ENV
+          echo "ENABLE_AUDIO=$(echo $CUSTOM | jq -r '.enable_audio // true')"             >> $GITHUB_ENV
+          echo "ENABLE_TCP=$(echo $CUSTOM | jq -r '.enable_tcp // true')"                 >> $GITHUB_ENV
+          echo "ENABLE_RESTART=$(echo $CUSTOM | jq -r '.enable_remote_restart // true')"  >> $GITHUB_ENV
+          echo "ENABLE_RECORD=$(echo $CUSTOM | jq -r '.enable_recording // true')"        >> $GITHUB_ENV
+          echo "ENABLE_BLOCK=$(echo $CUSTOM | jq -r '.enable_blocking_input // true')"    >> $GITHUB_ENV
+          echo "ENABLE_REMMOD=$(echo $CUSTOM | jq -r '.enable_remote_modification // false')" >> $GITHUB_ENV
+          echo "ENABLE_DIRECT=$(echo $CUSTOM | jq -r '.enable_direct_ip // false')"       >> $GITHUB_ENV
+          echo "ENABLE_PRINTER=$(echo $CUSTOM | jq -r '.enable_printer // true')"         >> $GITHUB_ENV
+          echo "ENABLE_CAMERA=$(echo $CUSTOM | jq -r '.enable_camera // true')"           >> $GITHUB_ENV
+          echo "ENABLE_TERMINAL=$(echo $CUSTOM | jq -r '.enable_terminal // true')"       >> $GITHUB_ENV
+          echo "DEFAULT_MANUAL=$(echo $CUSTOM | jq -r '.default_manual // ""')"           >> $GITHUB_ENV
+          echo "OVERRIDE_MANUAL=$(echo $CUSTOM | jq -r '.override_manual // ""')"         >> $GITHUB_ENV
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')"             >> $GITHUB_ENV
+          echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"              >> $GITHUB_ENV
+          echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"             >> $GITHUB_ENV
+
+      - name: Save agent files before RustDesk checkout
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-agent
+          cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" > /tmp/everty-agent/agent_constants.dart
+
+      - name: Report running
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Installing dependencies...\"}"
+
+      - name: Export GitHub Actions cache environment variables
+        shell: bash
+        run: |
+          echo "ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL}" >> $GITHUB_ENV
+          echo "ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN}" >> $GITHUB_ENV
+
+      - name: Checkout RustDesk source (tag)
+        if: env.VERSION != 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: refs/tags/${{ env.VERSION }}
+          submodules: recursive
+
+      - name: Checkout RustDesk source (master)
+        if: env.VERSION == 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Inject Smart Agent
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cp /tmp/everty-agent/agent_service.dart ./flutter/lib/agent_service.dart
+          cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
+
+          sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient).ignore();|" ./flutter/lib/main.dart
+          # NOTE: We INTENTIONALLY do NOT override navigatorKey here.
+          # An earlier attempt rewrote "navigatorKey: Get.key" to point at
+          # AgentService.navigatorKey — but RustDesk uses Get.key for ALL
+          # its dialogs (Get.dialog, Get.snackbar). Overriding it broke
+          # the Sign-in dialog (silent no-op on click). AgentService has
+          # its own _findContext() fallback that walks the widget tree, so
+          # the agent dialogs still work without hijacking Get.key.
+          # Support-request button: inject after stable anchor buildTip(context).
+          # CRITICAL: also inject the AgentService import at the top of the file,
+          # otherwise the build fails with "AgentService isn't defined".
+          if [ -f ./flutter/lib/desktop/pages/desktop_home_page.dart ]; then
+            sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\n|" ./flutter/lib/desktop/pages/desktop_home_page.dart
+            sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+            echo "✓ Support-request button injected into desktop_home_page.dart"
+            grep -c "showSupportRequestDialog" ./flutter/lib/desktop/pages/desktop_home_page.dart || echo "  ⚠️ injection may have failed"
+          fi
+
+      - name: Install ImageMagick
+        run: |
+          choco install -y imagemagick.app --no-progress
+          Get-ChildItem -Path "${env:ProgramFiles}" | % { $_.FullName } | Select-String -Pattern "[\/\\]ImageMagick[^\/\\]*$" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+
+      - name: Fix flutter_gpu_texture_renderer
+        shell: bash
+        run: |
+          sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.lock || true
+          sed -i -e 's|2ded7f146437a761ffe6981e2f742038f85ca68d|08a471bb8ceccdd50483c81cdfa8b81b07b14b87|' ./flutter/pubspec.yaml || true
+
+      - name: Rename app
+        if: env.APP_NAME != 'rustdesk' && env.APP_NAME != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|description = \"RustDesk Remote Desktop\"|description = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|ProductName = \"RustDesk\"|ProductName = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|FileDescription = \"RustDesk Remote Desktop\"|FileDescription = \"${APP_NAME}\"|" ./Cargo.toml
+          sed -i -e "s|OriginalFilename = \"rustdesk.exe\"|OriginalFilename = \"${APP_NAME}.exe\"|" ./Cargo.toml
+          sed -i -e "s|description = \"RustDesk Remote Desktop\"|description = \"${APP_NAME}\"|" ./libs/portable/Cargo.toml
+          sed -i -e "s|ProductName = \"RustDesk\"|ProductName = \"${APP_NAME}\"|" ./libs/portable/Cargo.toml
+          sed -i -e "s|const APP_PREFIX: \&str = \"rustdesk\";|const APP_PREFIX: \&str = \"${APP_NAME}\";|" ./libs/portable/src/main.rs
+          sed -i -e "s|\"RustDesk Remote Desktop\"|\"${APP_NAME}\"|" ./flutter/windows/runner/Runner.rc
+          sed -i -e "s|\"rustdesk.exe\"|\"${FILE_NAME}.exe\"|" ./flutter/windows/runner/Runner.rc
+          sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|" ./flutter/windows/runner/Runner.rc
+          [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
+          find ./src/lang -name "*.rs" -exec sed -i -e "s|RustDesk|${APP_NAME}|" {} \;
+          sed -i -e "s|RustDesk|${APP_NAME}|" ./res/msi/Package/License.rtf || true
+          # Also override get_app_name() body in src/common.rs — most reliable place
+          sed -i "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs || true
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
+          fi
+          # Patch APP_NAME in hbb_common — controls %APPDATA% folder, install dir and registry keys
+          sed -i -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
+          sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true
+
+      - name: Fix registry if app name has a space
+        if: contains(env.APP_NAME, ' ')
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|reg add {}|reg add \\\"{}\\\"|' ./src/platform/windows.rs
+          sed -i -e 's|{subkey}|\\\"{subkey}\\\"|' ./src/platform/windows.rs
+
+      - name: Set company name
+        if: env.COMPANY_NAME != '' && env.COMPANY_NAME != 'Purslane Ltd'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          sed -i -e "s|PURSLANE|${COMPANY_NAME}|" ./res/msi/preprocess.py || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./res/msi/preprocess.py || true
+          sed -i -e "s|Copyright © 2025 Purslane Ltd. All rights reserved.|Copyright © 2025 ${COMPANY_NAME}. All rights reserved.|" ./flutter/windows/runner/Runner.rc || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./flutter/windows/runner/Runner.rc || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./Cargo.toml || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./libs/portable/Cargo.toml || true
+          sed -i -e "s|Purslane Ltd|${COMPANY_NAME}|" ./res/msi/Package/License.rtf || true
+
+      - name: Set server, key, API server
+        continue-on-error: true
+        shell: bash
+        run: |
+          [ -n "${RDSERVER}" ]   && sed -i -e "s|rs-ny.rustdesk.com|${RDSERVER}|" ./libs/hbb_common/src/config.rs
+          [ -n "${RDKEY}" ]      && sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${RDKEY}|" ./libs/hbb_common/src/config.rs
+          [ -n "${API_SERVER}" ] && sed -i -e "s|https://admin.rustdesk.com|${API_SERVER}|" ./src/common.rs
+
+      - name: Change URL link
+        if: env.URL_LINK != 'https://rustdesk.com' && env.URL_LINK != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|Homepage: https://rustdesk.com|Homepage: ${URL_LINK}|" ./build.py
+          sed -i -e "s|launchUrl(Uri.parse('https://rustdesk.com'));|launchUrl(Uri.parse('${URL_LINK}'));|" ./flutter/lib/common.dart
+          sed -i -e "s|launchUrlString('https://rustdesk.com');|launchUrlString('${URL_LINK}');|" ./flutter/lib/desktop/pages/desktop_setting_page.dart
+          sed -i -e "s|const url = 'https://rustdesk.com/';|const url = '${URL_LINK}';|" ./flutter/lib/mobile/pages/settings_page.dart
+          sed -i -e "s|https://rustdesk.com/privacy.html|${URL_LINK}/privacy.html|" ./flutter/lib/desktop/pages/install_page.dart
+          sed -i -e "s|rustdesk.com|${URL_LINK}|" ./res/msi/Package/License.rtf || true
+
+      - name: Change download link
+        if: env.DOWNLOAD_LINK != 'https://rustdesk.com/download' && env.DOWNLOAD_LINK != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e "s|https://rustdesk.com/download|${DOWNLOAD_LINK}|" ./flutter/lib/desktop/pages/desktop_home_page.dart
+          sed -i -e "s|https://rustdesk.com/download|${DOWNLOAD_LINK}|" ./flutter/lib/mobile/pages/connection_page.dart
+
+      - name: Allow custom.txt + remove setup server tip
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py -OutFile allowCustom.py -TimeoutSec 30
+              python allowCustom.py
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff -TimeoutSec 30
+              git apply removeSetupServerTip.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "All retries failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Replace Flutter engine with RustDesk custom engine
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          mv -Force windows-x64-release/* C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/
+
+      - name: Patch Flutter dropdown
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff $(dirname $(dirname $(which flutter))) || true
+          cd $(dirname $(dirname $(which flutter)))
+          [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff || true
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.SCITER_RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: windows-2022
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          if ! $VCPKG_ROOT/vcpkg \
+            install \
+            --triplet x64-windows-static \
+            --x-install-root="$VCPKG_ROOT/installed"; then
+            find "${VCPKG_ROOT}/" -name "*.log" | while read -r _1; do
+              echo "$_1:"; echo "======"; cat "$_1"; echo "======"; echo ""
+            done
+            exit 1
+          fi
+        shell: bash
+
+      - name: Patch icon
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri "${env:ICON_URL}" -OutFile ./res/icon.png -TimeoutSec 30
+              mv ./res/icon.ico ./res/icon.ico.bak
+              mv ./res/tray-icon.ico ./res/tray-icon.ico.bak
+              magick ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico
+              cp ./res/icon.ico ./res/tray-icon.ico
+              magick ./res/icon.png -resize 32x32 ./res/32x32.png
+              magick ./res/icon.png -resize 64x64 ./res/64x64.png
+              magick ./res/icon.png -resize 128x128 ./res/128x128.png
+              magick ./res/128x128.png -resize 200% ./res/128x128@2x.png
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "Icon patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+      - name: Replace Flutter icons
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          cd ./flutter
+          flutter pub get
+          flutter pub run flutter_launcher_icons
+          cd ..
+
+      - name: Fix connection delay
+        if: env.DELAY_FIX == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Add cycle monitors to toolbar
+        if: env.CYCLE_MONITOR == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/cycle_monitor.diff -OutFile cycle_monitor.diff -TimeoutSec 30
+              git apply cycle_monitor.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "cycle_monitor patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+      - name: Use X for offline display
+        if: env.X_OFFLINE == 'true'
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/xoffline.diff -OutFile xoffline.diff -TimeoutSec 30
+              git apply xoffline.diff
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "xoffline patch failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+      - name: Remove new version notification
+        if: env.REMOVE_NOTIF == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|updateUrl.isNotEmpty|false|' ./flutter/lib/desktop/pages/desktop_home_page.dart
+          sed -i '/let (request, url) =/,/Ok(())/{/Ok(())/!d}' ./src/common.rs
+
+      - name: Report progress - building
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Building RustDesk (Rust + Flutter, 30-50 min)..."}'
+
+      - name: Build RustDesk
+        run: |
+          python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+          mv ./flutter/build/windows/x64/runner/Release ./rustdesk
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath . -Force
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse -ErrorAction SilentlyContinue
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat" -ErrorAction SilentlyContinue
+          mv -Force .\usbmmidd_v2 ./rustdesk
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
+            mkdir ./rustdesk/drivers
+            mv -Force .\rustdesk_printer_driver_v4-1.4 ./rustdesk/drivers/RustDeskPrinterDriver
+            Expand-Archive printer_driver_adapter.zip -DestinationPath .
+            mv -Force .\printer_driver_adapter.dll ./rustdesk
+          } catch {
+            Write-Host "Printer driver download failed, continuing without it."
+          }
+
+      - name: Icon stuff (update SVG in flutter assets)
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          mv ./rustdesk/data/flutter_assets/assets/icon.svg ./rustdesk/data/flutter_assets/assets/icon.svg.bak
+          magick ./res/icon.png ./rustdesk/data/flutter_assets/assets/icon.svg
+
+      - name: Logo stuff (place logo in flutter assets)
+        if: env.LOGO_URL != ''
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri "${env:LOGO_URL}" -OutFile ./rustdesk/data/flutter_assets/assets/logo.png -TimeoutSec 30
+              break
+            } catch {
+              if ($i -eq 3) { Write-Host "Logo download failed, continuing"; break }
+              Start-Sleep -Seconds 5
+            }
+          }
+
+      - name: Download RustDeskTempTopMostWindow
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $releases = Invoke-RestMethod "https://api.github.com/repos/rustdesk/RustDeskTempTopMostWindow/releases/latest"
+          $asset = $releases.assets | Where-Object { $_.name -like "*.exe" } | Select-Object -First 1
+          if ($asset) {
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile "./rustdesk/RustDeskTempTopMostWindow.exe"
+            Write-Host "Downloaded $($asset.name)"
+          } else {
+            Write-Host "No exe asset found, skipping"
+          }
+
+      - name: Find Runner.res
+        continue-on-error: true
+        shell: bash
+        run: |
+          runner_res=$(find . -name "Runner.res")
+          if [ -n "$runner_res" ]; then
+            cp "$runner_res" ./libs/portable/Runner.res
+          fi
+
+      - name: Generate custom_.txt
+        shell: python
+        run: |
+          import os, json
+
+          def yn(v):
+              return 'Y' if str(v).lower() in ('true','yes','y','1') else 'N'
+
+          cfg = {}
+
+          conn_type = os.environ.get('CONN_TYPE', 'both')
+          if conn_type != 'both':
+              cfg['conn-type'] = conn_type
+
+          if yn(os.environ.get('DISABLE_INSTALL', 'false')) == 'Y':
+              cfg['disable-installation'] = 'Y'
+          if yn(os.environ.get('DISABLE_SETTINGS', 'false')) == 'Y':
+              cfg['disable-settings'] = 'Y'
+
+          perm_pass = os.environ.get('PERM_PASSWORD', '')
+          if perm_pass:
+              cfg['password'] = perm_pass
+
+          cfg['enable-lan-discovery'] = yn(os.environ.get('ENABLE_LAN', 'true'))
+          cfg['allow-auto-disconnect'] = yn(os.environ.get('AUTO_DISCONNECT', 'false'))
+
+          mode_key = 'override-settings' if os.environ.get('SETTINGS_MODE') == 'override' else 'default-settings'
+          theme_key = 'override-settings' if os.environ.get('THEME_MODE') == 'override' else 'default-settings'
+
+          cfg['override-settings'] = {}
+          cfg['default-settings'] = {}
+
+          theme = os.environ.get('THEME', 'system')
+          if theme != 'system':
+              cfg[theme_key]['theme'] = theme
+
+          cfg[mode_key]['access-mode']                      = os.environ.get('ACCESS_MODE', 'custom')
+          cfg[mode_key]['enable-keyboard']                  = yn(os.environ.get('ENABLE_KB', 'true'))
+          cfg[mode_key]['enable-clipboard']                 = yn(os.environ.get('ENABLE_CB', 'true'))
+          cfg[mode_key]['enable-file-transfer']             = yn(os.environ.get('ENABLE_FT', 'true'))
+          cfg[mode_key]['enable-audio']                     = yn(os.environ.get('ENABLE_AUDIO', 'true'))
+          cfg[mode_key]['enable-tunnel']                    = yn(os.environ.get('ENABLE_TCP', 'true'))
+          cfg[mode_key]['enable-remote-restart']            = yn(os.environ.get('ENABLE_RESTART', 'true'))
+          cfg[mode_key]['enable-record-session']            = yn(os.environ.get('ENABLE_RECORD', 'true'))
+          cfg[mode_key]['enable-block-input']               = yn(os.environ.get('ENABLE_BLOCK', 'true'))
+          cfg[mode_key]['allow-remote-config-modification'] = yn(os.environ.get('ENABLE_REMMOD', 'false'))
+          cfg[mode_key]['direct-server']                    = yn(os.environ.get('ENABLE_DIRECT', 'false'))
+          cfg[mode_key]['verification-method']              = os.environ.get('VERIF_METHOD', 'use-both-passwords')
+          cfg[mode_key]['approve-mode']                     = os.environ.get('APPROVE_MODE', 'password-click')
+          cfg[mode_key]['allow-hide-cm']                    = yn(os.environ.get('HIDE_CM', 'false'))
+          cfg[mode_key]['allow-remove-wallpaper']           = yn(os.environ.get('REMOVE_WALLPAPER', 'true'))
+          cfg[mode_key]['enable-remote-printer']            = yn(os.environ.get('ENABLE_PRINTER', 'true'))
+          cfg[mode_key]['enable-camera']                    = yn(os.environ.get('ENABLE_CAMERA', 'true'))
+          cfg[mode_key]['enable-terminal']                  = yn(os.environ.get('ENABLE_TERMINAL', 'true'))
+
+          for line in os.environ.get('DEFAULT_MANUAL', '').splitlines():
+              if '=' in line:
+                  k, v = line.split('=', 1)
+                  cfg['default-settings'][k.strip()] = v.strip()
+
+          for line in os.environ.get('OVERRIDE_MANUAL', '').splitlines():
+              if '=' in line:
+                  k, v = line.split('=', 1)
+                  cfg['override-settings'][k.strip()] = v.strip()
+
+          if not cfg['default-settings']:
+              del cfg['default-settings']
+          if not cfg['override-settings']:
+              del cfg['override-settings']
+
+          with open('./rustdesk/custom_.txt', 'w') as f:
+              json.dump(cfg, f)
+
+      - name: Report progress - packaging
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Packaging installer..."}'
+
+      - name: Build self-extracted portable exe
+        shell: bash
+        run: |
+          APPNAME="${APP_NAME:-RustDesk}"
+          mv "./rustdesk/rustdesk.exe" "./rustdesk/${APPNAME}.exe" || true
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e "../../rustdesk/${APPNAME}.exe"
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe "./SignOutput/rustdesk.exe"
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build MSI installer
+        continue-on-error: true
+        run: |
+          $myappname = "${env:APP_NAME}" -replace '\s','_'
+          if (-not $myappname) { $myappname = "rustdesk" }
+          cp "rustdesk/${env:APP_NAME}.exe" "rustdesk/${myappname}.exe" -ErrorAction SilentlyContinue
+          pushd ./res/msi
+          python preprocess.py --app-name "$myappname" --arp -d ../../rustdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          cp ./Package/bin/x64/Release/en-us/Package.msi ../../SignOutput/rustdesk.msi
+          popd
+
+      - name: Rename output files
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk-client}"
+          mv "./SignOutput/rustdesk.exe" "./SignOutput/${FNAME}.exe" || true
+          mv "./SignOutput/rustdesk.msi" "./SignOutput/${FNAME}.msi" || true
+          ls -la ./SignOutput/
+
+      - name: Report progress - uploading
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Uploading to server..."}'
+
+      - name: Upload to server
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk-client}"
+          EXE="./SignOutput/${FNAME}.exe"
+          MSI="./SignOutput/${FNAME}.msi"
+          if [ -f "${EXE}" ]; then
+            curl -s -f -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${EXE}"
+          fi
+          if [ -f "${MSI}" ]; then
+            curl -s -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${MSI}" || true
+          fi
+
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"failed\",\"message\":\"Build failed. Logs: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"

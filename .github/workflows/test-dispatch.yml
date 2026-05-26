@@ -1,0 +1,25 @@
+name: Test Dispatch (diagnostic)
+
+on:
+  workflow_dispatch:
+    inputs:
+      token:
+        description: 'Build token'
+        required: true
+        type: string
+      genurl:
+        description: 'API server URL'
+        required: false
+        type: string
+      version:
+        description: 'Version'
+        required: false
+        default: 'master'
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch works
+        run: echo "✓ workflow dispatch is functional"
