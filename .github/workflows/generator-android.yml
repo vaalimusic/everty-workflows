@@ -182,10 +182,10 @@ jobs:
           path: ./
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-          components: "rustfmt"
+        run: |
+          rustup toolchain install ${{ env.RUST_VERSION }}
+          rustup default ${{ env.RUST_VERSION }}
+          rustup component add rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:

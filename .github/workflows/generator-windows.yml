@@ -308,11 +308,11 @@ jobs:
           [[ "3.24.5" == "${{ env.FLUTTER_VERSION }}" ]] && git apply flutter_3.24.4_dropdown_menu_enableFilter.diff || true
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.SCITER_RUST_VERSION }}
-          targets: x86_64-pc-windows-msvc
-          components: "rustfmt"
+        run: |
+          rustup toolchain install ${{ env.SCITER_RUST_VERSION }}
+          rustup default ${{ env.SCITER_RUST_VERSION }}
+          rustup target add x86_64-pc-windows-msvc
+          rustup component add rustfmt
 
       - uses: Swatinem/rust-cache@v2
         with:
