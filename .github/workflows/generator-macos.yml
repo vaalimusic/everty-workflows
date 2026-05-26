@@ -156,7 +156,7 @@ jobs:
             --x-install-root="$VCPKG_ROOT/installed"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: x86_64-apple-darwin
