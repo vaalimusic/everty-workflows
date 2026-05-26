@@ -123,11 +123,16 @@ class AgentService {
     return '';
   }
 
-  /// Tries to load the RustDesk ID with retries (max 4 attempts, 15s apart).
-  /// Called once at startup; stops as soon as the ID is found.
+  /// Tries to load the RustDesk numeric ID from the config file.
+  /// First attempt fires after 2 s (before the first heartbeat at 3 s),
+  /// then backs off to 15 s, 30 s, 45 s. Stops as soon as the ID is found.
   void _tryLoadRustdeskId({int attempt = 0}) {
     if (_rustdeskId != null && _rustdeskId!.isNotEmpty) return;
-    Future.delayed(Duration(seconds: 15 + attempt * 15), () async {
+    // Attempt 0: 2 s — catch the common case where the relay assigns the ID
+    //            before the first heartbeat (3 s). Subsequent retries use
+    //            longer delays for machines that get assigned IDs later.
+    final delaySec = attempt == 0 ? 2 : 15 * attempt;
+    Future.delayed(Duration(seconds: delaySec), () async {
       try {
         final id = await _readRustdeskIdFromConfig();
         if (id.isNotEmpty) {
@@ -135,7 +140,7 @@ class AgentService {
           return; // success — stop retrying
         }
       } catch (_) {}
-      if (attempt < 3) _tryLoadRustdeskId(attempt: attempt + 1);
+      if (attempt < 4) _tryLoadRustdeskId(attempt: attempt + 1);
     });
   }
 
