@@ -148,18 +148,20 @@ jobs:
         shell: bash
         run: |
           NDK_VER="${{ env.NDK_VERSION }}"
-          # Google's zip extracts to "android-ndk-<ver>", not "<ver>" — we rename for a clean path.
-          NDK_EXTRACTED="/opt/ndk/android-ndk-${NDK_VER}"
-          NDK_DIR="/opt/ndk/${NDK_VER}"
-          # Check source.properties (not just dir) — empty cached dir would skip install otherwise
+          # Use the exact directory Google's zip extracts to — no rename needed.
+          NDK_DIR="/opt/ndk/android-ndk-${NDK_VER}"
           if [ ! -f "${NDK_DIR}/source.properties" ]; then
             rm -rf "${NDK_DIR}"
             mkdir -p /opt/ndk
             curl -fsSL "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" -o /tmp/ndk.zip
             unzip -q /tmp/ndk.zip -d /opt/ndk
             rm /tmp/ndk.zip
-            # Rename android-ndk-r27c → r27c so ANDROID_NDK_HOME is predictable
-            mv "${NDK_EXTRACTED}" "${NDK_DIR}"
+          fi
+          # Verify install succeeded
+          if [ ! -f "${NDK_DIR}/source.properties" ]; then
+            echo "ERROR: NDK source.properties not found after install" >&2
+            ls /opt/ndk/ >&2
+            exit 1
           fi
           echo "ndk-path=${NDK_DIR}" >> $GITHUB_OUTPUT
           echo "${NDK_DIR}" >> $GITHUB_PATH
