@@ -21,6 +21,7 @@ class AgentService {
   String? _apiServer;
   String? _serviceKey;
   String? _machineId;
+  String? _rustdeskId; // RustDesk numeric ID, read lazily from config
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
 
@@ -44,6 +45,11 @@ class AgentService {
     _serviceKey = serviceKey;
     _isGenericClient = isGenericClient;
     _machineId = await _getOrCreateMachineId();
+    // Lazily read the RustDesk numeric ID from the config file.
+    // The ID may not be assigned by the relay server yet at startup, so we
+    // retry a few times with a delay. Once known, it is included in every
+    // subsequent heartbeat so the server can resolve support-request targets.
+    _tryLoadRustdeskId();
 
     Future.delayed(kInitialHeartbeatDelay, _sendHeartbeat);
     _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) => _sendHeartbeat());
@@ -74,6 +80,57 @@ class AgentService {
     return List.generate(32, (_) => chars[rng.nextInt(chars.length)]).join();
   }
 
+  /// Attempts to read the RustDesk numeric ID from the app config file.
+  /// RustDesk stores `id = "123456789"` in a TOML file in the config directory
+  /// (a sibling to the Flutter app-support directory).
+  /// We search a few candidate paths to stay robust across platforms and
+  /// custom build names.
+  Future<String> _readRustdeskIdFromConfig() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      // Candidate directories (platform-dependent):
+      //   Windows: %APPDATA%\{AppName}\  and  %APPDATA%\{AppName}\config
+      //   macOS:   ~/Library/Application Support/{AppName}/
+      //   Linux:   ~/.local/share/{AppName}/
+      final candidates = [
+        Directory(dir.path),
+        Directory('${dir.path}${Platform.pathSeparator}config'),
+        Directory('${dir.parent.path}${Platform.pathSeparator}config'),
+        dir.parent,
+      ];
+      for (final d in candidates) {
+        if (!await d.exists()) continue;
+        await for (final entity in d.list()) {
+          if (entity is File && entity.path.endsWith('.toml')) {
+            final content = await entity.readAsString();
+            final match = RegExp(r'^id\s*=\s*"([^"]+)"', multiLine: true).firstMatch(content);
+            if (match != null) {
+              final id = match.group(1) ?? '';
+              if (id.isNotEmpty) return id;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return '';
+  }
+
+  /// Tries to load the RustDesk ID with retries (max 4 attempts, 15s apart).
+  /// Called once at startup; stops as soon as the ID is found.
+  void _tryLoadRustdeskId({int attempt = 0}) {
+    if (_rustdeskId != null && _rustdeskId!.isNotEmpty) return;
+    Future.delayed(Duration(seconds: 15 + attempt * 15), () async {
+      try {
+        final id = await _readRustdeskIdFromConfig();
+        if (id.isNotEmpty) {
+          _rustdeskId = id;
+          return; // success — stop retrying
+        }
+      } catch (_) {}
+      if (attempt < 3) _tryLoadRustdeskId(attempt: attempt + 1);
+    });
+  }
+
   Future<void> _sendHeartbeat() async {
     if (_apiServer == null || _machineId == null) return;
     try {
@@ -86,6 +143,7 @@ class AgentService {
           'hostname': Platform.localHostname,
           'os': Platform.operatingSystem,
           'os_version': Platform.operatingSystemVersion,
+          'rustdesk_id': _rustdeskId ?? '', // numeric ID assigned by relay server
         }),
       ).timeout(kHttpTimeout);
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
