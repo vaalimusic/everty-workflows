@@ -577,10 +577,11 @@ class AgentService {
     } catch (_) {}
   }
 
-  Future<void> respondToSupportRequest(int requestId, String action) async {
-    if (_apiServer == null || _machineId == null) return;
+  /// Responds to a support request. Returns null on success, or an error string.
+  Future<String?> respondToSupportRequest(int requestId, String action) async {
+    if (_apiServer == null || _machineId == null) return 'Агент не инициализирован';
     try {
-      await http.post(
+      final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/support-request/respond'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -590,10 +591,16 @@ class AgentService {
           'action': action,
         }),
       ).timeout(kHttpTimeout);
+      if (resp.statusCode == 403) return 'Этот запрос адресован другому специалисту';
+      if (resp.statusCode == 409) return 'Запрос уже был обработан ранее';
+      if (resp.statusCode >= 400) return 'Ошибка сервера (${resp.statusCode})';
       // Burst-poll briefly — the server may also send follow-up notifications
       // (e.g. confirmation snackbar) that the operator should see right away.
       _startBurstPolling();
-    } catch (_) {}
+      return null; // success
+    } catch (_) {
+      return 'Нет связи с сервером';
+    }
   }
 
   /// Parses "req-123" → 123, used when reading support_ping options.
@@ -672,8 +679,18 @@ class AgentService {
         actions: actionLabels.entries.map((entry) {
           return TextButton(
             onPressed: () async {
+              String? respondError;
               if (requestId != null) {
-                await respondToSupportRequest(requestId, entry.key);
+                respondError = await respondToSupportRequest(requestId, entry.key);
+              }
+              // If server rejected the action (403 / 409), show error and keep dialog open.
+              if (respondError != null) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text(respondError), backgroundColor: const Color(0xFFDC2626)),
+                  );
+                }
+                return;
               }
               await _ackNotification(item['id'].toString());
               if (ctx.mounted) Navigator.of(ctx).pop();
