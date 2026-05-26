@@ -22,6 +22,7 @@ class AgentService {
   String? _serviceKey;
   String? _machineId;
   String? _rustdeskId;       // RustDesk numeric ID, read lazily from config
+  String _fileName = '';     // branded file name (e.g. "EvertyDesk") — used to find the config TOML
   bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
@@ -46,12 +47,14 @@ class AgentService {
     bool isGenericClient = false,
     bool showPeerList = true,
     bool allowSupportRequest = true, // informational; button injection is build-time
+    String fileName = '',            // branded file name — used to locate the RustDesk config TOML
   }) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
     _serviceKey = serviceKey;
     _isGenericClient = isGenericClient;
     _showPeerList = showPeerList;
+    _fileName = fileName;
     _machineId = await _getOrCreateMachineId();
     // Lazily read the RustDesk numeric ID from the config file.
     // The ID may not be assigned by the relay server yet at startup, so we
@@ -88,38 +91,75 @@ class AgentService {
     return List.generate(32, (_) => chars[rng.nextInt(chars.length)]).join();
   }
 
-  /// Attempts to read the RustDesk numeric ID from the app config file.
-  /// RustDesk stores `id = "123456789"` in a TOML file in the config directory
-  /// (a sibling to the Flutter app-support directory).
-  /// We search a few candidate paths to stay robust across platforms and
-  /// custom build names.
+  /// Attempts to read the RustDesk numeric ID from the app config TOML file.
+  ///
+  /// Key insight: Flutter's getApplicationSupportDirectory() and RustDesk's
+  /// own config directory are DIFFERENT on Windows and Linux:
+  ///   Windows Flutter:  %APPDATA%\{Company}\{App}\     ← Flutter convention
+  ///   Windows RustDesk: %APPDATA%\{FileName}\           ← RustDesk's own path
+  ///   Linux Flutter:    ~/.local/share/{App}/
+  ///   Linux RustDesk:   ~/.config/{FileName}/
+  ///
+  /// We use _fileName (the branded binary name) to construct the exact path,
+  /// then fall back to Flutter's support dir for edge cases.
   Future<String> _readRustdeskIdFromConfig() async {
+    // Regex: handles id = "123456789", id = '123456789', id = 123456789
+    final idRegex = RegExp(r"""\bid\s*=\s*['"]?(\d{6,12})['"]?""", multiLine: true);
+
+    final candidates = <Directory>[];
+
+    // ── 1. Platform-specific RustDesk paths (most reliable) ──────────────────
+    if (_fileName.isNotEmpty) {
+      if (Platform.isWindows) {
+        final appData = Platform.environment['APPDATA'] ?? '';
+        if (appData.isNotEmpty) {
+          candidates.add(Directory('$appData\\$_fileName'));
+          candidates.add(Directory('$appData\\$_fileName\\config'));
+        }
+      } else if (Platform.isMacOS) {
+        final home = Platform.environment['HOME'] ?? '';
+        if (home.isNotEmpty) {
+          candidates.add(Directory('$home/Library/Application Support/$_fileName'));
+        }
+      } else if (Platform.isLinux) {
+        final home = Platform.environment['HOME'] ?? '';
+        if (home.isNotEmpty) {
+          // RustDesk uses ~/.config/<name>/ on Linux, NOT ~/.local/share/
+          candidates.add(Directory('$home/.config/$_fileName'));
+          candidates.add(Directory('$home/.config/$_fileName/config'));
+        }
+      }
+    }
+
+    // ── 2. Flutter app-support dir fallback (may match on macOS, rarely others)
     try {
       final dir = await getApplicationSupportDirectory();
-      // Candidate directories (platform-dependent):
-      //   Windows: %APPDATA%\{AppName}\  and  %APPDATA%\{AppName}\config
-      //   macOS:   ~/Library/Application Support/{AppName}/
-      //   Linux:   ~/.local/share/{AppName}/
-      final candidates = [
+      candidates.addAll([
         Directory(dir.path),
         Directory('${dir.path}${Platform.pathSeparator}config'),
         Directory('${dir.parent.path}${Platform.pathSeparator}config'),
         dir.parent,
-      ];
-      for (final d in candidates) {
+      ]);
+    } catch (_) {}
+
+    // ── Search ────────────────────────────────────────────────────────────────
+    for (final d in candidates) {
+      try {
         if (!await d.exists()) continue;
         await for (final entity in d.list()) {
-          if (entity is File && entity.path.endsWith('.toml')) {
+          if (entity is! File) continue;
+          if (!entity.path.endsWith('.toml')) continue;
+          try {
             final content = await entity.readAsString();
-            final match = RegExp(r'^id\s*=\s*"([^"]+)"', multiLine: true).firstMatch(content);
+            final match = idRegex.firstMatch(content);
             if (match != null) {
               final id = match.group(1) ?? '';
-              if (id.isNotEmpty) return id;
+              if (id.isNotEmpty && int.tryParse(id) != null) return id;
             }
-          }
+          } catch (_) {}
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
     return '';
   }
 

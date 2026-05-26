@@ -115,7 +115,7 @@ jobs:
         run: |
           mkdir -p /tmp/everty-agent
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" > /tmp/everty-agent/agent_constants.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kFileName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${FILE_NAME}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Report running
         shell: bash
@@ -160,7 +160,7 @@ jobs:
           cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
 
           sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
-          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest).ignore();|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, fileName: kFileName).ignore();|" ./flutter/lib/main.dart
           # NOTE: We INTENTIONALLY do NOT override navigatorKey here.
           # An earlier attempt rewrote "navigatorKey: Get.key" to point at
           # AgentService.navigatorKey — but RustDesk uses Get.key for ALL
