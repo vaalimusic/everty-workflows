@@ -22,7 +22,7 @@ class AgentService {
   String? _serviceKey;
   String? _machineId;
   String? _rustdeskId;       // RustDesk numeric ID, read lazily from config
-  String _fileName = '';     // branded file name (e.g. "EvertyDesk") — used to find the config TOML
+  String _appName = '';      // branded app name (e.g. "Everty Desk") — controls config dir name, matches APP_NAME in hbb_common
   bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
@@ -47,14 +47,19 @@ class AgentService {
     bool isGenericClient = false,
     bool showPeerList = true,
     bool allowSupportRequest = true, // informational; button injection is build-time
-    String fileName = '',            // branded file name — used to locate the RustDesk config TOML
+    String appName = '',             // APP_NAME used at build time — controls the config folder name
   }) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
     _serviceKey = serviceKey;
     _isGenericClient = isGenericClient;
     _showPeerList = showPeerList;
-    _fileName = fileName;
+    // Normalise: empty / literal "null" / lowercase "rustdesk" all mean the
+    // default RustDesk build whose config lives in a folder named "RustDesk".
+    final raw = appName.trim();
+    _appName = (raw.isEmpty || raw == 'null' || raw.toLowerCase() == 'rustdesk')
+        ? 'RustDesk'
+        : raw;
     _machineId = await _getOrCreateMachineId();
     // Lazily read the RustDesk numeric ID from the config file.
     // The ID may not be assigned by the relay server yet at startup, so we
@@ -93,41 +98,43 @@ class AgentService {
 
   /// Attempts to read the RustDesk numeric ID from the app config TOML file.
   ///
-  /// Key insight: Flutter's getApplicationSupportDirectory() and RustDesk's
-  /// own config directory are DIFFERENT on Windows and Linux:
-  ///   Windows Flutter:  %APPDATA%\{Company}\{App}\     ← Flutter convention
-  ///   Windows RustDesk: %APPDATA%\{FileName}\           ← RustDesk's own path
-  ///   Linux Flutter:    ~/.local/share/{App}/
-  ///   Linux RustDesk:   ~/.config/{FileName}/
+  /// Key insight: the config folder name is APP_NAME (patched into hbb_common
+  /// at build time), NOT the executable file name (FILE_NAME).
   ///
-  /// We use _fileName (the branded binary name) to construct the exact path,
-  /// then fall back to Flutter's support dir for edge cases.
+  ///   Windows:  %APPDATA%\{APP_NAME}\           e.g. %APPDATA%\Everty Desk\
+  ///   Linux:    ~/.config/{APP_NAME}/            e.g. ~/.config/Everty Desk/
+  ///   macOS:    ~/Library/Preferences/{APP_NAME}/
+  ///
+  /// Flutter's getApplicationSupportDirectory() points elsewhere — we keep it
+  /// only as a last-resort fallback.
   Future<String> _readRustdeskIdFromConfig() async {
     // Regex: handles id = "123456789", id = '123456789', id = 123456789
     final idRegex = RegExp(r"""\bid\s*=\s*['"]?(\d{6,12})['"]?""", multiLine: true);
 
     final candidates = <Directory>[];
 
-    // ── 1. Platform-specific RustDesk paths (most reliable) ──────────────────
-    if (_fileName.isNotEmpty) {
-      if (Platform.isWindows) {
-        final appData = Platform.environment['APPDATA'] ?? '';
-        if (appData.isNotEmpty) {
-          candidates.add(Directory('$appData\\$_fileName'));
-          candidates.add(Directory('$appData\\$_fileName\\config'));
-        }
-      } else if (Platform.isMacOS) {
-        final home = Platform.environment['HOME'] ?? '';
-        if (home.isNotEmpty) {
-          candidates.add(Directory('$home/Library/Application Support/$_fileName'));
-        }
-      } else if (Platform.isLinux) {
-        final home = Platform.environment['HOME'] ?? '';
-        if (home.isNotEmpty) {
-          // RustDesk uses ~/.config/<name>/ on Linux, NOT ~/.local/share/
-          candidates.add(Directory('$home/.config/$_fileName'));
-          candidates.add(Directory('$home/.config/$_fileName/config'));
-        }
+    // ── 1. Platform-specific RustDesk paths using APP_NAME (most reliable) ───
+    // _appName is always non-empty (defaults to "RustDesk" if not customised).
+    if (Platform.isWindows) {
+      final appData = Platform.environment['APPDATA'] ?? '';
+      if (appData.isNotEmpty) {
+        candidates.add(Directory('$appData\\$_appName'));
+        candidates.add(Directory('$appData\\$_appName\\config'));
+      }
+    } else if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        // RustDesk uses dirs_next::config_dir() → ~/Library/Preferences/ on macOS
+        candidates.add(Directory('$home/Library/Preferences/$_appName'));
+        // Some builds / older versions used Application Support — keep as fallback
+        candidates.add(Directory('$home/Library/Application Support/$_appName'));
+      }
+    } else if (Platform.isLinux) {
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        // RustDesk uses dirs_next::config_dir() → ~/.config/ on Linux
+        candidates.add(Directory('$home/.config/$_appName'));
+        candidates.add(Directory('$home/.config/$_appName/config'));
       }
     }
 

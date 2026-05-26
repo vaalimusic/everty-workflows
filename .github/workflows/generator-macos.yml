@@ -76,7 +76,9 @@ jobs:
         run: |
           mkdir -p /tmp/everty-agent
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kFileName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${FILE_NAME}" > /tmp/everty-agent/agent_constants.dart
+          # APP_NAME controls the config folder name in hbb_common (e.g. "Everty Desk").
+          # FILE_NAME is only the dmg/binary name — these can differ, so we pass APP_NAME.
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Report running
         shell: bash
@@ -125,7 +127,7 @@ jobs:
           cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
 
           sed -i '' "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
-          sed -i '' "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, fileName: kFileName).ignore();|" ./flutter/lib/main.dart
+          sed -i '' "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, appName: kAppName).ignore();|" ./flutter/lib/main.dart
           # NOTE: navigatorKey is NOT overridden. RustDesk's Get.dialog /
           # Get.snackbar rely on Get.key being attached to the live Navigator;
           # rewriting it broke the Sign-in dialog. AgentService uses its
