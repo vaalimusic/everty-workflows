@@ -193,6 +193,14 @@ class AgentService {
 
   Future<void> _sendHeartbeat() async {
     if (_apiServer == null || _machineId == null) return;
+    // If ID still unknown, try once more before sending — covers the case
+    // where all startup retries ran before RustDesk got its ID from relay.
+    if (_rustdeskId == null || _rustdeskId!.isEmpty) {
+      try {
+        final id = await _readRustdeskIdFromConfig();
+        if (id.isNotEmpty) _rustdeskId = id;
+      } catch (_) {}
+    }
     try {
       final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/heartbeat'),
