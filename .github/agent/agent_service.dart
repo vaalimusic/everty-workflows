@@ -21,7 +21,8 @@ class AgentService {
   String? _apiServer;
   String? _serviceKey;
   String? _machineId;
-  String? _rustdeskId; // RustDesk numeric ID, read lazily from config
+  String? _rustdeskId;       // RustDesk numeric ID, read lazily from config
+  bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
 
@@ -39,11 +40,18 @@ class AgentService {
   bool _isGenericClient = false;
 
   // Called from main() after app boots.
-  Future<void> initialize({required String apiServer, String serviceKey = '', bool isGenericClient = false}) async {
+  Future<void> initialize({
+    required String apiServer,
+    String serviceKey = '',
+    bool isGenericClient = false,
+    bool showPeerList = true,
+    bool allowSupportRequest = true, // informational; button injection is build-time
+  }) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
     _serviceKey = serviceKey;
     _isGenericClient = isGenericClient;
+    _showPeerList = showPeerList;
     _machineId = await _getOrCreateMachineId();
     // Lazily read the RustDesk numeric ID from the config file.
     // The ID may not be assigned by the relay server yet at startup, so we
@@ -716,22 +724,28 @@ class AgentService {
     final ValueNotifier<bool> loadingOperators = ValueNotifier(true);
     final ValueNotifier<List<Map<String, String>>> history = ValueNotifier([]);
     // Generic clients (is_generic=true baked in at build time) have no
-    // operator list — start in manual mode immediately.
+    // operator list. Also respect the build-time show_peer_list flag.
     final isGenericClient = _isGenericClient;
-    final ValueNotifier<bool> useManualMode = ValueNotifier(isGenericClient);
+    final hidePeerList = !_showPeerList; // build-time: admin disabled list
+    final ValueNotifier<bool> useManualMode = ValueNotifier(isGenericClient || hidePeerList);
 
     // Load operator list + history in background.
+    // Skip fetching if the peer list is hidden (no point in calling the API).
     // For generic clients we still call fetchOperators (it returns [] anyway)
     // — but skip the auto-switch since we're already in manual mode.
-    fetchOperators().then((list) {
-      operators.value = list;
+    if (hidePeerList) {
       loadingOperators.value = false;
-      if (list.isEmpty && !isGenericClient) {
-        // Tenant client whose operator list is empty (e.g. nobody online yet)
-        // — also switch to manual to give user a way to act
-        useManualMode.value = true;
-      }
-    });
+    } else {
+      fetchOperators().then((list) {
+        operators.value = list;
+        loadingOperators.value = false;
+        if (list.isEmpty && !isGenericClient) {
+          // Tenant client whose operator list is empty (e.g. nobody online yet)
+          // — also switch to manual to give user a way to act
+          useManualMode.value = true;
+        }
+      });
+    }
     loadSupportHistory().then((h) => history.value = h);
 
     showDialog(
@@ -745,10 +759,10 @@ class AgentService {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Mode toggle row — only shown if operator list is non-empty
-                // AND this isn't a generic (unbranded) client. Generic clients
-                // never have an operator list, so the toggle is just clutter.
-                if (!isGenericClient)
+                // Mode toggle row — only shown if operator list is non-empty,
+                // this isn't a generic (unbranded) client, and the build
+                // allows showing the peer list (show_peer_list setting).
+                if (!isGenericClient && !hidePeerList)
                   ValueListenableBuilder<List<Map<String, dynamic>>>(
                     valueListenable: operators,
                     builder: (_, list, __) {

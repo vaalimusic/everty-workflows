@@ -105,6 +105,8 @@ jobs:
           echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')"             >> $GITHUB_ENV
           echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"              >> $GITHUB_ENV
           echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"             >> $GITHUB_ENV
+          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list // true')"        >> $GITHUB_ENV
+          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request // true')"  >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
@@ -113,7 +115,7 @@ jobs:
         run: |
           mkdir -p /tmp/everty-agent
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" > /tmp/everty-agent/agent_constants.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Report running
         shell: bash
@@ -158,7 +160,7 @@ jobs:
           cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
 
           sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
-          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient).ignore();|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest).ignore();|" ./flutter/lib/main.dart
           # NOTE: We INTENTIONALLY do NOT override navigatorKey here.
           # An earlier attempt rewrote "navigatorKey: Get.key" to point at
           # AgentService.navigatorKey — but RustDesk uses Get.key for ALL
@@ -166,14 +168,18 @@ jobs:
           # the Sign-in dialog (silent no-op on click). AgentService has
           # its own _findContext() fallback that walks the widget tree, so
           # the agent dialogs still work without hijacking Get.key.
-          # Support-request button: inject after stable anchor buildTip(context).
+          # Support-request button: inject only if allow_support_request=true.
           # CRITICAL: also inject the AgentService import at the top of the file,
           # otherwise the build fails with "AgentService isn't defined".
           if [ -f ./flutter/lib/desktop/pages/desktop_home_page.dart ]; then
             sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\n|" ./flutter/lib/desktop/pages/desktop_home_page.dart
-            sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
-            echo "✓ Support-request button injected into desktop_home_page.dart"
-            grep -c "showSupportRequestDialog" ./flutter/lib/desktop/pages/desktop_home_page.dart || echo "  ⚠️ injection may have failed"
+            if [ "${ALLOW_SUPPORT}" == "true" ]; then
+              sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+              echo "✓ Support-request button injected into desktop_home_page.dart"
+              grep -c "showSupportRequestDialog" ./flutter/lib/desktop/pages/desktop_home_page.dart || echo "  ⚠️ injection may have failed"
+            else
+              echo "ℹ️ Support-request button disabled for this build (allow_support_request=false)"
+            fi
           fi
 
       - name: Install ImageMagick
