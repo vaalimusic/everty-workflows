@@ -475,6 +475,7 @@ class AgentService {
           'message': message,
           'target_machine_id': targetMachineId,
           'target_rustdesk_id': targetRustdeskId,
+          'from_rustdesk_id': _rustdeskId ?? '', // own numeric ID for operator auto-connect
         }),
       ).timeout(kHttpTimeout);
       // After sending a help request, the user is waiting for an answer.
@@ -598,9 +599,12 @@ class AgentService {
   /// Shows a special dialog when the operator's agent receives a support_ping.
   /// Buttons: Принять / Через 10 мин / Через час / Отклонить.
   /// Each maps to an option in the AgentNotification payload (accept/defer10/defer60/decline).
+  /// If the ping includes a meta:from_rdid=<id> option, pressing «Принять» will
+  /// automatically open a RustDesk connection to the requester's machine.
   void showSupportPingDialog(BuildContext ctx, Map<String, dynamic> item) {
     final options = (item['options'] as List<dynamic>?)?.cast<String>() ?? [];
     int? requestId;
+    String? fromRdId; // client's RustDesk numeric ID for auto-connect
     final actionLabels = <String, String>{
       'accept': '✓ Принять',
       'defer10': 'Через 10 мин',
@@ -614,10 +618,14 @@ class AgentService {
       'decline': const Color(0xFFDC2626),
     };
     for (final o in options) {
+      if (o.startsWith('meta:from_rdid=')) {
+        final id = o.substring('meta:from_rdid='.length).trim();
+        if (id.isNotEmpty) fromRdId = id;
+        continue; // not a button
+      }
       final id = _parseRequestRef(o);
-      if (id != null) {
+      if (id != null && requestId == null) {
         requestId = id;
-        break;
       }
     }
 
@@ -640,6 +648,16 @@ class AgentService {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(item['body']?.toString() ?? '', style: const TextStyle(fontSize: 14, height: 1.5)),
+              if (fromRdId != null) ...[
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Icon(Icons.link, size: 14, color: Color(0xFF6B7280)),
+                    const SizedBox(width: 4),
+                    Text('ID: $fromRdId', style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280))),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -651,10 +669,16 @@ class AgentService {
               }
               await _ackNotification(item['id'].toString());
               if (ctx.mounted) Navigator.of(ctx).pop();
-              if (entry.key == 'accept' && ctx.mounted) {
-                ScaffoldMessenger.of(ctx).showSnackBar(
-                  const SnackBar(content: Text('Запрос принят. Свяжитесь с пользователем.')),
-                );
+              if (entry.key == 'accept') {
+                // Auto-connect: open RustDesk URL scheme so the desktop client
+                // immediately initiates a connection to the requester.
+                if (fromRdId != null && fromRdId!.isNotEmpty) {
+                  await _openRustdeskConnection(fromRdId!);
+                } else if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('Запрос принят. Свяжитесь с пользователем.')),
+                  );
+                }
               }
             },
             style: TextButton.styleFrom(foregroundColor: actionTypes[entry.key]),
@@ -663,6 +687,24 @@ class AgentService {
         }).toList(),
       ),
     );
+  }
+
+  /// Opens a direct RustDesk connection to [peerId] using the RustDesk URL scheme.
+  /// rustdesk://peerId causes RustDesk to bring itself to foreground and connect.
+  Future<void> _openRustdeskConnection(String peerId) async {
+    final url = 'rustdesk://$peerId';
+    try {
+      if (Platform.isWindows) {
+        await Process.start('cmd', ['/c', 'start', '', url], runInShell: true);
+      } else if (Platform.isMacOS) {
+        await Process.start('open', [url]);
+      } else if (Platform.isLinux) {
+        await Process.start('xdg-open', [url]);
+      }
+    } catch (_) {
+      // Fallback: copy ID to clipboard so the operator can connect manually.
+      await Clipboard.setData(ClipboardData(text: peerId));
+    }
   }
 
   void showSupportRequestDialog(BuildContext ctx) {
