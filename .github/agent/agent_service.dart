@@ -9,6 +9,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_hbb/common.dart' show bind;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
@@ -111,13 +112,22 @@ class AgentService {
   /// Flutter's getApplicationSupportDirectory() points elsewhere — we keep it
   /// only as a last-resort fallback.
   Future<String> _readRustdeskIdFromConfig() async {
-    // Regex: handles id = "123456789", id = '123456789', id = 123456789
+    // ── 1. Ask RustDesk directly via native binding (most reliable) ───────────
+    // bind.mainGetMyId() is available because this agent is injected into the
+    // flutter_hbb process at build time. This works regardless of config format
+    // (plain id= or enc_id= encryption introduced in newer RustDesk versions).
+    try {
+      final id = await bind.mainGetMyId().timeout(const Duration(seconds: 3));
+      if (id.isNotEmpty && int.tryParse(id) != null) return id;
+    } catch (_) {}
+
+    // ── 2. File fallback: parse .toml config ──────────────────────────────────
+    // Handles both plain `id = "123"` and the older unencrypted format.
+    // enc_id (encrypted) cannot be decoded here — binding above covers that.
     final idRegex = RegExp(r"""\bid\s*=\s*['"]?(\d{6,12})['"]?""", multiLine: true);
 
     final candidates = <Directory>[];
 
-    // ── 1. Platform-specific RustDesk paths using APP_NAME (most reliable) ───
-    // _appName is always non-empty (defaults to "RustDesk" if not customised).
     if (Platform.isWindows) {
       final appData = Platform.environment['APPDATA'] ?? '';
       if (appData.isNotEmpty) {
@@ -127,21 +137,17 @@ class AgentService {
     } else if (Platform.isMacOS) {
       final home = Platform.environment['HOME'] ?? '';
       if (home.isNotEmpty) {
-        // RustDesk uses dirs_next::config_dir() → ~/Library/Preferences/ on macOS
         candidates.add(Directory('$home/Library/Preferences/$_appName'));
-        // Some builds / older versions used Application Support — keep as fallback
         candidates.add(Directory('$home/Library/Application Support/$_appName'));
       }
     } else if (Platform.isLinux) {
       final home = Platform.environment['HOME'] ?? '';
       if (home.isNotEmpty) {
-        // RustDesk uses dirs_next::config_dir() → ~/.config/ on Linux
         candidates.add(Directory('$home/.config/$_appName'));
         candidates.add(Directory('$home/.config/$_appName/config'));
       }
     }
 
-    // ── 2. Flutter app-support dir fallback (may match on macOS, rarely others)
     try {
       final dir = await getApplicationSupportDirectory();
       candidates.addAll([
@@ -152,7 +158,6 @@ class AgentService {
       ]);
     } catch (_) {}
 
-    // ── Search ────────────────────────────────────────────────────────────────
     for (final d in candidates) {
       try {
         if (!await d.exists()) continue;
