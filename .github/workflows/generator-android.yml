@@ -150,6 +150,8 @@ jobs:
           NDK_VER="${{ env.NDK_VERSION }}"
           # Use the exact directory Google's zip extracts to — no rename needed.
           NDK_DIR="/opt/ndk/android-ndk-${NDK_VER}"
+          # Remove stale renamed directory from old workflow versions
+          [ -d "/opt/ndk/${NDK_VER}" ] && rm -rf "/opt/ndk/${NDK_VER}" || true
           if [ ! -f "${NDK_DIR}/source.properties" ]; then
             rm -rf "${NDK_DIR}"
             mkdir -p /opt/ndk
@@ -165,6 +167,8 @@ jobs:
           fi
           echo "ndk-path=${NDK_DIR}" >> $GITHUB_OUTPUT
           echo "${NDK_DIR}" >> $GITHUB_PATH
+          # Override any stale ANDROID_NDK_HOME set on the runner globally
+          echo "ANDROID_NDK_HOME=${NDK_DIR}" >> $GITHUB_ENV
 
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
