@@ -26,6 +26,9 @@ class AgentService {
   bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
+  // Tracks notification IDs that currently have a dialog open.
+  // Prevents duplicate dialogs when inbox is polled while dialog is still showing.
+  final Set<String> _activePingDialogIds = {};
 
   // Tunables — exposed at top for easy adjustment.
   // Lower values = more responsive support flow but more server load.
@@ -253,9 +256,12 @@ class AgentService {
         } else if (item['type'] == 'support_ping') {
           // Peer-to-peer support request — operator sees this on their own client.
           // Don't auto-ack here; ack happens after operator picks a response action.
-          _withContext((ctx) {
-            showSupportPingDialog(ctx, item as Map<String, dynamic>);
-          });
+          final pingId = item['id']?.toString() ?? '';
+          if (!_activePingDialogIds.contains(pingId)) {
+            _withContext((ctx) {
+              showSupportPingDialog(ctx, item as Map<String, dynamic>);
+            });
+          }
         } else {
           _withContext((ctx) async {
             await _ackNotification(item['id'].toString());
@@ -704,6 +710,8 @@ class AgentService {
       }
     }
 
+    final dialogId = item['id']?.toString() ?? '';
+    _activePingDialogIds.add(dialogId);
     showDialog(
       context: ctx,
       barrierDismissible: false,
@@ -753,6 +761,7 @@ class AgentService {
                 return;
               }
               await _ackNotification(item['id'].toString());
+              _activePingDialogIds.remove(dialogId);
               if (ctx.mounted) Navigator.of(ctx).pop();
               if (entry.key == 'accept') {
                 // Auto-connect: open RustDesk URL scheme so the desktop client
@@ -771,7 +780,11 @@ class AgentService {
           );
         }).toList(),
       ),
-    );
+    ).then((_) {
+      // Fallback cleanup: remove from active set when dialog is dismissed
+      // by any means (back button, system, app restart, etc.)
+      _activePingDialogIds.remove(dialogId);
+    });
   }
 
   /// Opens a direct RustDesk connection to [peerId] using the RustDesk URL scheme.
