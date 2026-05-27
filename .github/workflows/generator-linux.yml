@@ -72,6 +72,7 @@ jobs:
           echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"  >> $GITHUB_ENV
           echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list // true')"       >> $GITHUB_ENV
           echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request // true')" >> $GITHUB_ENV
+          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id // true')"     >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
@@ -245,6 +246,19 @@ jobs:
         shell: bash
         run: |
           sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Enable Change ID feature
+        if: env.ALLOW_CHANGE_ID == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          # Allow users to change their RustDesk ID in Settings.
+          # The feature is gated by an option check — patch it to always return true.
+          sed -i "s|get_local_option(\"allow-change-id\") == \"Y\"|true|g" \
+            ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          sed -i "s|mainGetOption(key: 'allow-change-id') == 'Y'|true|g" \
+            ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          echo "allow-change-id enabled (patched desktop_setting_page.dart)"
 
       - name: Report progress - building
         shell: bash
