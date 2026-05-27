@@ -541,10 +541,12 @@ class AgentService {
     } catch (_) {}
   }
 
-  Future<void> sendSupportRequest({String message = '', String targetMachineId = '', String targetRustdeskId = ''}) async {
-    if (_apiServer == null || _machineId == null) return;
+  /// Sends a support request. Returns null on success, or a human-readable
+  /// error string (e.g. rate-limit message) that the caller should display.
+  Future<String?> sendSupportRequest({String message = '', String targetMachineId = '', String targetRustdeskId = ''}) async {
+    if (_apiServer == null || _machineId == null) return 'Агент не инициализирован';
     try {
-      await http.post(
+      final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/support-request'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -557,11 +559,28 @@ class AgentService {
           'from_rustdesk_id': _rustdeskId ?? '', // own numeric ID for operator auto-connect
         }),
       ).timeout(kHttpTimeout);
+
+      if (resp.statusCode == 429) {
+        // Rate-limit or open-request cap hit. Try to extract the server's message.
+        try {
+          final body = jsonDecode(resp.body) as Map<String, dynamic>;
+          final msg = body['message'] as String?;
+          if (msg != null && msg.isNotEmpty) return msg;
+        } catch (_) {}
+        return 'Слишком много запросов. Подождите немного и попробуйте снова.';
+      }
+      if (resp.statusCode >= 400) {
+        return 'Ошибка сервера (${resp.statusCode}). Попробуйте позже.';
+      }
+
       // After sending a help request, the user is waiting for an answer.
       // Burst-poll inbox for 60 seconds (every 5 sec) so the reply
       // notification (✓ Принят / ⏰ Через 10 мин / Отклонён) lands quickly.
       _startBurstPolling();
-    } catch (_) {}
+      return null; // success
+    } catch (_) {
+      return 'Нет связи с сервером. Проверьте интернет-соединение.';
+    }
   }
 
   Timer? _burstTimer;
@@ -1059,13 +1078,27 @@ class AgentService {
                 return;
               }
 
-              await sendSupportRequest(
+              final sendError = await sendSupportRequest(
                 message: messageCtl.text.trim(),
                 targetMachineId: isManualEnabled ? '' : (op?['machine_id']?.toString() ?? ''),
                 targetRustdeskId: isManualEnabled ? manualId : '',
               );
 
-              // Save to local history
+              if (sendError != null) {
+                // Show error without closing the dialog so user can retry.
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(
+                      content: Text(sendError),
+                      backgroundColor: const Color(0xFFDC2626),
+                      duration: const Duration(seconds: 5),
+                    ),
+                  );
+                }
+                return;
+              }
+
+              // Save to local history on success
               final saveId = isManualEnabled ? manualId : (op?['machine_id']?.toString() ?? '');
               final saveLabel = isManualEnabled
                   ? manualId
@@ -1082,7 +1115,7 @@ class AgentService {
                       ? 'Запрос отправлен на ID $manualId. Ожидайте подключения.'
                       : (op != null
                           ? 'Запрос отправлен ${op['hostname'] ?? "сотруднику"}. Ожидайте уведомления.'
-                          : 'Запрос отправлен. Свободный сотрудник подключится в ближайшее время.')
+                          : 'Запрос отправлен. Любой свободный сотрудник подключится в ближайшее время.')
                   )),
                 );
               }
