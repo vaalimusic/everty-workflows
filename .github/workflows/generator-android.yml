@@ -148,26 +148,28 @@ jobs:
         shell: bash
         run: |
           NDK_VER="${{ env.NDK_VERSION }}"
-          # Use the exact directory Google's zip extracts to — no rename needed.
-          NDK_DIR="/opt/ndk/android-ndk-${NDK_VER}"
-          # Remove stale renamed directory from old workflow versions
-          [ -d "/opt/ndk/${NDK_VER}" ] && rm -rf "/opt/ndk/${NDK_VER}" || true
+          # Always install to /opt/ndk/r27c (short name) — this matches the
+          # ANDROID_NDK_HOME that may be set globally on the self-hosted runner.
+          NDK_DIR="/opt/ndk/${NDK_VER}"
           if [ ! -f "${NDK_DIR}/source.properties" ]; then
             rm -rf "${NDK_DIR}"
+            rm -rf "/opt/ndk/android-ndk-${NDK_VER}"
             mkdir -p /opt/ndk
             curl -fsSL "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" -o /tmp/ndk.zip
             unzip -q /tmp/ndk.zip -d /opt/ndk
             rm /tmp/ndk.zip
+            # Google extracts to android-ndk-r27c/ — rename to short path
+            mv "/opt/ndk/android-ndk-${NDK_VER}" "${NDK_DIR}"
           fi
           # Verify install succeeded
           if [ ! -f "${NDK_DIR}/source.properties" ]; then
-            echo "ERROR: NDK source.properties not found after install" >&2
+            echo "ERROR: NDK not found at ${NDK_DIR}" >&2
             ls /opt/ndk/ >&2
             exit 1
           fi
           echo "ndk-path=${NDK_DIR}" >> $GITHUB_OUTPUT
           echo "${NDK_DIR}" >> $GITHUB_PATH
-          # Override any stale ANDROID_NDK_HOME set on the runner globally
+          # Force-set ANDROID_NDK_HOME for all subsequent steps
           echo "ANDROID_NDK_HOME=${NDK_DIR}" >> $GITHUB_ENV
 
       - name: Setup vcpkg with GitHub Actions binary cache
