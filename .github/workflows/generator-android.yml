@@ -144,11 +144,34 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
       - name: Install Android NDK
-        uses: nttld/setup-ndk@v1
         id: setup-ndk
-        with:
-          ndk-version: ${{ env.NDK_VERSION }}
-          add-to-path: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_VER="${{ env.NDK_VERSION }}"
+          NDK_DIR="${RUNNER_TEMP}/android-ndk-${NDK_VER}-${{ matrix.job.arch }}"
+          EXTRACT_DIR="${RUNNER_TEMP}/android-ndk-extract-${NDK_VER}-${{ matrix.job.arch }}"
+          ZIP_PATH="${RUNNER_TEMP}/android-ndk-${NDK_VER}-${{ matrix.job.arch }}.zip"
+
+          if [ ! -f "${NDK_DIR}/source.properties" ]; then
+            rm -rf "${NDK_DIR}" "${EXTRACT_DIR}" "${ZIP_PATH}"
+            mkdir -p "${EXTRACT_DIR}"
+            curl -fsSL "https://dl.google.com/android/repository/android-ndk-${NDK_VER}-linux.zip" -o "${ZIP_PATH}"
+            unzip -q "${ZIP_PATH}" -d "${EXTRACT_DIR}"
+            mv "${EXTRACT_DIR}/android-ndk-${NDK_VER}" "${NDK_DIR}"
+            rm -rf "${EXTRACT_DIR}" "${ZIP_PATH}"
+          fi
+
+          if [ ! -f "${NDK_DIR}/source.properties" ]; then
+            echo "ERROR: NDK not found at ${NDK_DIR}" >&2
+            find "${RUNNER_TEMP}" -maxdepth 3 -name source.properties -print >&2 || true
+            exit 1
+          fi
+
+          echo "ndk-path=${NDK_DIR}" >> $GITHUB_OUTPUT
+          echo "${NDK_DIR}" >> $GITHUB_PATH
+          echo "ANDROID_NDK_HOME=${NDK_DIR}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=${NDK_DIR}" >> $GITHUB_ENV
 
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
