@@ -73,41 +73,41 @@ jobs:
           echo "PERM_PASSWORD=$(echo $CUSTOM | jq -r '.permanent_password // ""')"        >> $GITHUB_ENV
           echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // "https://rustdesk.com"')"   >> $GITHUB_ENV
           echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // "https://rustdesk.com/download"')" >> $GITHUB_ENV
-          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix // true')"                   >> $GITHUB_ENV
+          echo "DELAY_FIX=$(echo $CUSTOM | jq -r '.delay_fix != false')"                   >> $GITHUB_ENV
           echo "CYCLE_MONITOR=$(echo $CUSTOM | jq -r '.cycle_monitor // false')"          >> $GITHUB_ENV
           echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
-          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif // true')" >> $GITHUB_ENV
+          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif != false')" >> $GITHUB_ENV
           echo "SETTINGS_MODE=$(echo $CUSTOM | jq -r '.settings_mode // "default"')"      >> $GITHUB_ENV
           echo "ACCESS_MODE=$(echo $CUSTOM | jq -r '.access_mode // "custom"')"           >> $GITHUB_ENV
           echo "APPROVE_MODE=$(echo $CUSTOM | jq -r '.approve_mode // "password-click"')" >> $GITHUB_ENV
           echo "VERIF_METHOD=$(echo $CUSTOM | jq -r '.verification_method // "use-both-passwords"')" >> $GITHUB_ENV
           echo "HIDE_CM=$(echo $CUSTOM | jq -r '.hide_cm // false')"                      >> $GITHUB_ENV
-          echo "REMOVE_WALLPAPER=$(echo $CUSTOM | jq -r '.remove_wallpaper // true')"     >> $GITHUB_ENV
+          echo "REMOVE_WALLPAPER=$(echo $CUSTOM | jq -r '.remove_wallpaper != false')"     >> $GITHUB_ENV
           echo "THEME=$(echo $CUSTOM | jq -r '.theme // "system"')"                       >> $GITHUB_ENV
           echo "THEME_MODE=$(echo $CUSTOM | jq -r '.theme_mode // "default"')"            >> $GITHUB_ENV
-          echo "ENABLE_LAN=$(echo $CUSTOM | jq -r '.enable_lan_discovery // true')"       >> $GITHUB_ENV
+          echo "ENABLE_LAN=$(echo $CUSTOM | jq -r '.enable_lan_discovery != false')"       >> $GITHUB_ENV
           echo "AUTO_DISCONNECT=$(echo $CUSTOM | jq -r '.allow_auto_disconnect // false')" >> $GITHUB_ENV
-          echo "ENABLE_KB=$(echo $CUSTOM | jq -r '.enable_keyboard // true')"             >> $GITHUB_ENV
-          echo "ENABLE_CB=$(echo $CUSTOM | jq -r '.enable_clipboard // true')"            >> $GITHUB_ENV
-          echo "ENABLE_FT=$(echo $CUSTOM | jq -r '.enable_file_transfer // true')"        >> $GITHUB_ENV
-          echo "ENABLE_AUDIO=$(echo $CUSTOM | jq -r '.enable_audio // true')"             >> $GITHUB_ENV
-          echo "ENABLE_TCP=$(echo $CUSTOM | jq -r '.enable_tcp // true')"                 >> $GITHUB_ENV
-          echo "ENABLE_RESTART=$(echo $CUSTOM | jq -r '.enable_remote_restart // true')"  >> $GITHUB_ENV
-          echo "ENABLE_RECORD=$(echo $CUSTOM | jq -r '.enable_recording // true')"        >> $GITHUB_ENV
-          echo "ENABLE_BLOCK=$(echo $CUSTOM | jq -r '.enable_blocking_input // true')"    >> $GITHUB_ENV
+          echo "ENABLE_KB=$(echo $CUSTOM | jq -r '.enable_keyboard != false')"             >> $GITHUB_ENV
+          echo "ENABLE_CB=$(echo $CUSTOM | jq -r '.enable_clipboard != false')"            >> $GITHUB_ENV
+          echo "ENABLE_FT=$(echo $CUSTOM | jq -r '.enable_file_transfer != false')"        >> $GITHUB_ENV
+          echo "ENABLE_AUDIO=$(echo $CUSTOM | jq -r '.enable_audio != false')"             >> $GITHUB_ENV
+          echo "ENABLE_TCP=$(echo $CUSTOM | jq -r '.enable_tcp != false')"                 >> $GITHUB_ENV
+          echo "ENABLE_RESTART=$(echo $CUSTOM | jq -r '.enable_remote_restart != false')"  >> $GITHUB_ENV
+          echo "ENABLE_RECORD=$(echo $CUSTOM | jq -r '.enable_recording != false')"        >> $GITHUB_ENV
+          echo "ENABLE_BLOCK=$(echo $CUSTOM | jq -r '.enable_blocking_input != false')"    >> $GITHUB_ENV
           echo "ENABLE_REMMOD=$(echo $CUSTOM | jq -r '.enable_remote_modification // false')" >> $GITHUB_ENV
           echo "ENABLE_DIRECT=$(echo $CUSTOM | jq -r '.enable_direct_ip // false')"       >> $GITHUB_ENV
-          echo "ENABLE_PRINTER=$(echo $CUSTOM | jq -r '.enable_printer // true')"         >> $GITHUB_ENV
-          echo "ENABLE_CAMERA=$(echo $CUSTOM | jq -r '.enable_camera // true')"           >> $GITHUB_ENV
-          echo "ENABLE_TERMINAL=$(echo $CUSTOM | jq -r '.enable_terminal // true')"       >> $GITHUB_ENV
+          echo "ENABLE_PRINTER=$(echo $CUSTOM | jq -r '.enable_printer != false')"         >> $GITHUB_ENV
+          echo "ENABLE_CAMERA=$(echo $CUSTOM | jq -r '.enable_camera != false')"           >> $GITHUB_ENV
+          echo "ENABLE_TERMINAL=$(echo $CUSTOM | jq -r '.enable_terminal != false')"       >> $GITHUB_ENV
           echo "DEFAULT_MANUAL=$(echo $CUSTOM | jq -r '.default_manual // ""')"           >> $GITHUB_ENV
           echo "OVERRIDE_MANUAL=$(echo $CUSTOM | jq -r '.override_manual // ""')"         >> $GITHUB_ENV
-          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')"             >> $GITHUB_ENV
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent != false')"             >> $GITHUB_ENV
           echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"              >> $GITHUB_ENV
           echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"             >> $GITHUB_ENV
-          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list // true')"        >> $GITHUB_ENV
-          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request // true')"  >> $GITHUB_ENV
-          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id // true')"      >> $GITHUB_ENV
+          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"        >> $GITHUB_ENV
+          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')"  >> $GITHUB_ENV
+          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"      >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
