@@ -67,12 +67,12 @@ jobs:
           echo "GENURL_VALUE=${GENURL}"                                       >> $GITHUB_ENV
 
           CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
-          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent // true')" >> $GITHUB_ENV
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent != false')" >> $GITHUB_ENV
           echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"   >> $GITHUB_ENV
           echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"  >> $GITHUB_ENV
-          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list // true')"       >> $GITHUB_ENV
-          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request // true')" >> $GITHUB_ENV
-          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id // true')"     >> $GITHUB_ENV
+          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"       >> $GITHUB_ENV
+          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')" >> $GITHUB_ENV
+          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"     >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
