@@ -85,6 +85,13 @@ jobs:
           # FILE_NAME is only the deb/binary name — these can differ, so we pass APP_NAME.
           printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" > /tmp/everty-agent/agent_constants.dart
 
+      - name: Save Everty patches before RustDesk checkout
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-patches
+          cp .github/patches/apply_ab_folders.py /tmp/everty-patches/apply_ab_folders.py
+          cp .github/patches/apply_ab_improvements.py /tmp/everty-patches/apply_ab_improvements.py
+
       - name: Report running
         shell: bash
         run: |
@@ -161,6 +168,22 @@ jobs:
               echo "ℹ️ Support-request button disabled for this build (allow_support_request=false)"
             fi
           fi
+
+      - name: Apply AB folder tags patch
+        if: env.VERSION == '1.4.6'
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "Applying address book folder tags patch for 1.4.6..."
+          python3 /tmp/everty-patches/apply_ab_folders.py && echo "✓ AB folders patch OK" || echo "⚠️ AB folders patch failed (non-fatal)"
+
+      - name: Apply AB improvements patch (note + copy ID + search)
+        if: env.VERSION == '1.4.6'
+        continue-on-error: true
+        shell: bash
+        run: |
+          echo "Applying address book improvements patch for 1.4.6..."
+          python3 /tmp/everty-patches/apply_ab_improvements.py && echo "✓ AB improvements OK" || echo "⚠️ AB improvements failed (non-fatal)"
 
       - name: Install Flutter
         uses: subosito/flutter-action@v2
