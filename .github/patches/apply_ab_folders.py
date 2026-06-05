@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Everty patch: folder/group tree view for address book.
 Targets RustDesk 1.4.6 (flutter/lib/common/widgets/address_book.dart).
@@ -133,7 +133,7 @@ if OLD_BUILD_TAGS not in src:
     print('ERROR: _buildTags() not found — source may have changed from 1.4.6', file=sys.stderr)
     sys.exit(1)
 src = src.replace(OLD_BUILD_TAGS, NEW_BUILD_TAGS, 1)
-print('  ✓ _buildTags() replaced with folder-aware version')
+print('  [OK] _buildTags() replaced with folder-aware version')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Add optional displayName field + ctor param to AddressBookTag
@@ -174,7 +174,7 @@ if OLD_TAG_CLASS_HEAD not in src:
     print('ERROR: AddressBookTag class header not found', file=sys.stderr)
     sys.exit(1)
 src = src.replace(OLD_TAG_CLASS_HEAD, NEW_TAG_CLASS_HEAD, 1)
-print('  ✓ AddressBookTag.displayName field added')
+print('  [OK] AddressBookTag.displayName field added')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Use displayName in the Text widget inside AddressBookTag.build()
@@ -197,7 +197,7 @@ if OLD_TAG_TEXT not in src:
     print('ERROR: AddressBookTag Text widget not found', file=sys.stderr)
     sys.exit(1)
 src = src.replace(OLD_TAG_TEXT, NEW_TAG_TEXT, 1)
-print('  ✓ AddressBookTag Text uses displayName')
+print('  [OK] AddressBookTag Text uses displayName')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Insert _AbFolderTile class just before AddressBookTag
@@ -206,9 +206,9 @@ FOLDER_TILE = r'''
 // ─── Everty: Expandable folder tile ──────────────────────────────────────────
 // Renders a collapsible folder header + its leaf tag chips.
 // The folder header shows:
-//   • folder icon (open/closed)
-//   • folder name (bold when any child is selected)
-//   • filter icon to select/deselect all children at once
+//   - folder icon (open/closed)
+//   - folder name (bold when any child is selected)
+//   - filter icon to select/deselect all children at once
 class _AbFolderTile extends StatefulWidget {
   final String folder;
   final List<String> children;
@@ -321,7 +321,7 @@ if INSERT_BEFORE not in src:
     print('ERROR: class AddressBookTag not found', file=sys.stderr)
     sys.exit(1)
 src = src.replace(INSERT_BEFORE, FOLDER_TILE + INSERT_BEFORE, 1)
-print('  ✓ _AbFolderTile class inserted')
+print('  [OK] _AbFolderTile class inserted')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Fix: show "Sort tags" menu item in non-legacy mode too
@@ -339,7 +339,7 @@ if OLD_SORT_GUARD not in src:
     print('WARNING: sortMenuItem guard not found — may already be fixed or source changed', file=sys.stderr)
 else:
     src = src.replace(OLD_SORT_GUARD, NEW_SORT_GUARD, 1)
-    print('  ✓ Sort tags menu item always visible (legacyMode guard removed)')
+    print('  [OK] Sort tags menu item always visible (legacyMode guard removed)')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Add live search bar above peers list
@@ -404,7 +404,7 @@ if OLD_PEERS_VIEW not in src:
     print('WARNING: _buildPeersViews() not found — may have changed', file=sys.stderr)
 else:
     src = src.replace(OLD_PEERS_VIEW, NEW_PEERS_VIEW, 1)
-    print('  ✓ Search bar added above peers list')
+    print('  [OK] Search bar added above peers list')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Write result
@@ -412,6 +412,6 @@ else:
 with open(PATH, 'w', encoding='utf-8') as f:
     f.write(src)
 
-print(f'\n✓ AB folders patch applied to {PATH}')
-print('  Usage: create tags like "Серверы/Prod", "Серверы/Dev" → grouped under "Серверы" folder.')
-print('  Sort tags: right-click "..." in tag header → "Sort tags" (now always visible).')
+print(f'\n[OK] AB folders patch applied to {PATH}')
+print('  Usage: create tags like "Серверы/Prod", "Серверы/Dev" -> grouped under "Серверы" folder.')
+print('  Sort tags: right-click "..." in tag header -> "Sort tags" (now always visible).')

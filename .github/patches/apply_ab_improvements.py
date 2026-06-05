@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Everty patch: address book peer card improvements.
 Targets RustDesk 1.4.6 (flutter/lib/common/widgets/peer_card.dart).
@@ -43,7 +43,7 @@ if OLD_SHOW_NOTE not in src:
     print('WARNING: _showNote() not found — source may have changed', file=sys.stderr)
 else:
     src = src.replace(OLD_SHOW_NOTE, NEW_SHOW_NOTE, 1)
-    print('  ✓ _showNote() always returns true when note is non-empty')
+    print('  [OK] _showNote() always returns true when note is non-empty')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. Add "Copy ID" to AddressBookPeerCard context menu
@@ -100,7 +100,7 @@ if OLD_AB_MENU_START not in src:
           file=sys.stderr)
 else:
     src = src.replace(OLD_AB_MENU_START, NEW_AB_MENU_START, 1)
-    print('  ✓ "Copy ID" added to AddressBookPeerCard context menu')
+    print('  [OK] "Copy ID" added to AddressBookPeerCard context menu')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Write result
@@ -108,6 +108,6 @@ else:
 with open(PATH, 'w', encoding='utf-8') as f:
     f.write(src)
 
-print(f'\n✓ AB improvements patch applied to {PATH}')
-print('  • Peer notes now always visible on card when non-empty')
-print('  • Right-click any AB peer → "Copy ID" copies ID to clipboard')
+print(f'\n[OK] AB improvements patch applied to {PATH}')
+print('  - Peer notes now always visible on card when non-empty')
+print('  - Right-click any AB peer -> "Copy ID" copies ID to clipboard')
