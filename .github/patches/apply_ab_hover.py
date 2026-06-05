@@ -221,20 +221,20 @@ print('  [OK] _EvertyHoverCard class inserted')
 # 3a. In _buildLandscape: change "return MouseRegion(" to a local variable
 #     so we can wrap it with _EvertyHoverCard.
 # ─────────────────────────────────────────────────────────────────────────────
-OLD_RETURN_MOUSE = '''  return MouseRegion(
-    onEnter: (evt) {
-      deco.value = BoxDecoration(
-        border: Border.all(
-            color: Theme.of(context).colorScheme.primary,
-            width: _borderWidth),'''
+OLD_RETURN_MOUSE = '''    return MouseRegion(
+      onEnter: (evt) {
+        deco.value = BoxDecoration(
+          border: Border.all(
+              color: Theme.of(context).colorScheme.primary,
+              width: _borderWidth),'''
 
-NEW_RETURN_MOUSE = '''  // Everty: assign to variable so _EvertyHoverCard can wrap it
-  final _evertyHoverInner = MouseRegion(
-    onEnter: (evt) {
-      deco.value = BoxDecoration(
-        border: Border.all(
-            color: Theme.of(context).colorScheme.primary,
-            width: _borderWidth),'''
+NEW_RETURN_MOUSE = '''    // Everty: assign to variable so _EvertyHoverCard can wrap it
+    final _evertyHoverInner = MouseRegion(
+      onEnter: (evt) {
+        deco.value = BoxDecoration(
+          border: Border.all(
+              color: Theme.of(context).colorScheme.primary,
+              width: _borderWidth),'''
 
 if OLD_RETURN_MOUSE not in src:
     print('ERROR: _buildLandscape MouseRegion not found', file=sys.stderr)
@@ -245,21 +245,21 @@ print('  [OK] _buildLandscape: MouseRegion assigned to variable')
 # ─────────────────────────────────────────────────────────────────────────────
 # 3b. Replace the closing of _buildLandscape to return _EvertyHoverCard
 # ─────────────────────────────────────────────────────────────────────────────
-OLD_LANDSCAPE_END = '''    child: gestureDetector(
-        child: Obx(() => peerCardUiType.value == PeerUiType.grid
-            ? _buildPeerCard(context, peer, deco)
-            : _buildPeerTile(context, peer, deco))),
-  );
-}'''
+OLD_LANDSCAPE_END = '''      child: gestureDetector(
+          child: Obx(() => peerCardUiType.value == PeerUiType.grid
+              ? _buildPeerCard(context, peer, deco)
+              : _buildPeerTile(context, peer, deco))),
+    );
+  }'''
 
-NEW_LANDSCAPE_END = '''    child: gestureDetector(
-        child: Obx(() => peerCardUiType.value == PeerUiType.grid
-            ? _buildPeerCard(context, peer, deco)
-            : _buildPeerTile(context, peer, deco))),
-  );
-  // Everty: wrap with hover popup (note + tags shown on 600ms hover)
-  return _EvertyHoverCard(peer: peer, child: _evertyHoverInner);
-}'''
+NEW_LANDSCAPE_END = '''      child: gestureDetector(
+          child: Obx(() => peerCardUiType.value == PeerUiType.grid
+              ? _buildPeerCard(context, peer, deco)
+              : _buildPeerTile(context, peer, deco))),
+    );
+    // Everty: wrap with hover popup (note + tags shown on 600ms hover)
+    return _EvertyHoverCard(peer: peer, child: _evertyHoverInner);
+  }'''
 
 if OLD_LANDSCAPE_END not in src:
     print('ERROR: _buildLandscape closing not found', file=sys.stderr)
