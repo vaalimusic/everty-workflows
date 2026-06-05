@@ -1,4 +1,11 @@
 ﻿#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys
+# Force UTF-8 stdout/stderr — Windows runners default to cp1252 which can't
+# encode Unicode chars present in comments and Dart string literals.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 """
 Everty patch: folder/group tree view for address book.
 Targets RustDesk 1.4.6 (flutter/lib/common/widgets/address_book.dart).
@@ -413,5 +420,5 @@ with open(PATH, 'w', encoding='utf-8') as f:
     f.write(src)
 
 print(f'\n[OK] AB folders patch applied to {PATH}')
-print('  Usage: create tags like "Серверы/Prod", "Серверы/Dev" -> grouped under "Серверы" folder.')
+print('  Usage: create tags like "Servers/Prod", "Servers/Dev" -> grouped under "Servers" folder.')
 print('  Sort tags: right-click "..." in tag header -> "Sort tags" (now always visible).')

@@ -1,4 +1,10 @@
 ﻿#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import sys
+# Force UTF-8 stdout/stderr — Windows runners default to cp1252.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 """
 Everty patch: address book peer card improvements.
 Targets RustDesk 1.4.6 (flutter/lib/common/widgets/peer_card.dart).
