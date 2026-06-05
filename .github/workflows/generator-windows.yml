@@ -126,6 +126,7 @@ jobs:
           mkdir -p /tmp/everty-patches
           cp .github/patches/apply_ab_folders.py /tmp/everty-patches/apply_ab_folders.py
           cp .github/patches/apply_ab_improvements.py /tmp/everty-patches/apply_ab_improvements.py
+          cp .github/patches/apply_ab_hover.py /tmp/everty-patches/apply_ab_hover.py
 
       - name: Report running
         shell: bash
@@ -203,6 +204,12 @@ jobs:
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_improvements.py
+
+      - name: Apply AB hover popup patch
+        if: env.VERSION == '1.4.6'
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_ab_hover.py
 
       - name: Install ImageMagick
         run: |
