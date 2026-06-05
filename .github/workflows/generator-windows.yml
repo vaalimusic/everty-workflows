@@ -1,4 +1,4 @@
-name: Generator Windows
+﻿name: Generator Windows
 
 on:
   workflow_dispatch:
@@ -194,19 +194,15 @@ jobs:
 
       - name: Apply AB folder tags patch
         if: env.VERSION == '1.4.6'
-        continue-on-error: true
         shell: bash
         run: |
-          echo "Applying address book folder tags patch for 1.4.6..."
-          python3 /tmp/everty-patches/apply_ab_folders.py && echo "✓ AB folders patch OK" || echo "⚠️ AB folders patch failed (non-fatal)"
+          python3 /tmp/everty-patches/apply_ab_folders.py
 
       - name: Apply AB improvements patch (note + copy ID + search)
         if: env.VERSION == '1.4.6'
-        continue-on-error: true
         shell: bash
         run: |
-          echo "Applying address book improvements patch for 1.4.6..."
-          python3 /tmp/everty-patches/apply_ab_improvements.py && echo "✓ AB improvements OK" || echo "⚠️ AB improvements failed (non-fatal)"
+          python3 /tmp/everty-patches/apply_ab_improvements.py
 
       - name: Install ImageMagick
         run: |
