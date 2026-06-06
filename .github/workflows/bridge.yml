@@ -30,16 +30,28 @@ jobs:
               extra-build-args: "",
             }
     steps:
+      - name: Normalize RustDesk version (strip build suffix)
+        id: ver
+        shell: bash
+        run: |
+          VER="${{ inputs.version }}"
+          if [[ -z "$VER" || "$VER" == "master" ]]; then
+            echo "base=master" >> $GITHUB_OUTPUT
+          else
+            BASE=$(echo "$VER" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            echo "base=${BASE:-$VER}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Checkout source code
-        if: ${{ inputs.version != 'master' }}
+        if: ${{ inputs.version != 'master' && inputs.version != '' }}
         uses: actions/checkout@v4
         with:
           repository: rustdesk/rustdesk
-          ref: refs/tags/${{ inputs.version }}
+          ref: refs/tags/${{ steps.ver.outputs.base }}
           submodules: recursive
-        
+
       - name: Checkout source code
-        if: ${{ inputs.version == 'master' }}
+        if: ${{ inputs.version == 'master' || inputs.version == '' }}
         uses: actions/checkout@v4
         with:
           repository: rustdesk/rustdesk

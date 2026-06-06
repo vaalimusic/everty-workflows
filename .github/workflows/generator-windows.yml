@@ -136,6 +136,17 @@ jobs:
             -H "Content-Type: application/json" \
             -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Installing dependencies...\"}"
 
+      - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
+        shell: bash
+        run: |
+          if [[ "${VERSION}" != "master" && -n "${VERSION}" ]]; then
+            BASE=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$BASE" && "$BASE" != "${VERSION}" ]]; then
+              echo "Stripping build suffix: ${VERSION} -> ${BASE}"
+              echo "VERSION=${BASE}" >> $GITHUB_ENV
+            fi
+          fi
+
       - name: Export GitHub Actions cache environment variables
         shell: bash
         run: |
