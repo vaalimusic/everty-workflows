@@ -107,6 +107,17 @@ jobs:
         run: |
           brew install nasm yasm jq
 
+      - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
+        shell: bash
+        run: |
+          if [[ "${VERSION}" != "master" && -n "${VERSION}" ]]; then
+            BASE=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$BASE" && "$BASE" != "${VERSION}" ]]; then
+              echo "Stripping build suffix: ${VERSION} -> ${BASE}"
+              echo "VERSION=${BASE}" >> $GITHUB_ENV
+            fi
+          fi
+
       - name: Checkout RustDesk source (tag)
         if: env.VERSION != 'master'
         uses: actions/checkout@v4
@@ -389,6 +400,17 @@ jobs:
       - name: Install Homebrew dependencies
         run: |
           brew install nasm yasm jq
+
+      - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
+        shell: bash
+        run: |
+          if [[ "${VERSION}" != "master" && -n "${VERSION}" ]]; then
+            BASE=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$BASE" && "$BASE" != "${VERSION}" ]]; then
+              echo "Stripping build suffix: ${VERSION} -> ${BASE}"
+              echo "VERSION=${BASE}" >> $GITHUB_ENV
+            fi
+          fi
 
       - name: Checkout RustDesk source (tag)
         if: env.VERSION != 'master'

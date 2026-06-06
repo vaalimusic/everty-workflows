@@ -124,6 +124,17 @@ jobs:
             libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev \
             libxfixes-dev llvm-dev nasm ninja-build pkg-config wget dpkg-dev
 
+      - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
+        shell: bash
+        run: |
+          if [[ "${VERSION}" != "master" && -n "${VERSION}" ]]; then
+            BASE=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$BASE" && "$BASE" != "${VERSION}" ]]; then
+              echo "Stripping build suffix: ${VERSION} -> ${BASE}"
+              echo "VERSION=${BASE}" >> $GITHUB_ENV
+            fi
+          fi
+
       - name: Checkout RustDesk source (tag)
         if: env.VERSION != 'master'
         uses: actions/checkout@v4
