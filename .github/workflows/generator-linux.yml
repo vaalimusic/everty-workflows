@@ -183,25 +183,25 @@ jobs:
           fi
 
       - name: Apply AB folder tags patch
-        if: env.VERSION == '1.4.6'
+        if: startsWith(env.VERSION, '1.4.')
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_folders.py
 
       - name: Apply AB improvements patch (note + copy ID + search)
-        if: env.VERSION == '1.4.6'
+        if: startsWith(env.VERSION, '1.4.')
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_improvements.py
 
       - name: Apply AB hover popup patch
-        if: env.VERSION == '1.4.6'
+        if: startsWith(env.VERSION, '1.4.')
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_hover.py
 
       - name: Apply peer icons patch
-        if: env.VERSION == '1.4.6'
+        if: startsWith(env.VERSION, '1.4.')
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_peer_icons.py
