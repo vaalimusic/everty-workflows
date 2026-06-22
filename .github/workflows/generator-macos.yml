@@ -264,21 +264,6 @@ jobs:
             sed -i '' -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
           fi
 
-      - name: Set macOS bundle name (Finder/Dock display name)
-        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
-        continue-on-error: true
-        shell: bash
-        run: |
-          XCCONFIG=./flutter/macos/Runner/Configs/AppInfo.xcconfig
-          PLIST=./flutter/macos/Runner/Info.plist
-          [ -f "$XCCONFIG" ] && sed -i '' "s|^PRODUCT_NAME = .*|PRODUCT_NAME = ${APP_NAME}|" "$XCCONFIG" || true
-          if [ -f "$PLIST" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" || true
-            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" || \
-              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" || true
-          fi
-          echo "macOS bundle name set to ${APP_NAME}"
-
       - name: Generate macOS app icon (.icns)
         if: env.ICON_URL != ''
         continue-on-error: true
@@ -328,6 +313,24 @@ jobs:
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter
+
+      - name: Rename built .app bundle (Finder/Dock display name)
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          APP=$(find . -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          if [ -n "$APP" ]; then
+            DIR=$(dirname "$APP")
+            NEW="$DIR/${APP_NAME}.app"
+            if [ "$APP" != "$NEW" ]; then
+              mv "$APP" "$NEW"
+            fi
+            PLIST="$NEW/Contents/Info.plist"
+            [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" 2>/dev/null
+            [ -f "$PLIST" ] && { /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" 2>/dev/null; }
+            echo "Renamed to: $NEW"
+          fi
 
       - name: Ad-hoc sign and package DMG
         shell: bash
@@ -605,21 +608,6 @@ jobs:
             sed -i '' -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
           fi
 
-      - name: Set macOS bundle name (Finder/Dock display name)
-        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
-        continue-on-error: true
-        shell: bash
-        run: |
-          XCCONFIG=./flutter/macos/Runner/Configs/AppInfo.xcconfig
-          PLIST=./flutter/macos/Runner/Info.plist
-          [ -f "$XCCONFIG" ] && sed -i '' "s|^PRODUCT_NAME = .*|PRODUCT_NAME = ${APP_NAME}|" "$XCCONFIG" || true
-          if [ -f "$PLIST" ]; then
-            /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" || true
-            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" || \
-              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" || true
-          fi
-          echo "macOS bundle name set to ${APP_NAME}"
-
       - name: Generate macOS app icon (.icns)
         if: env.ICON_URL != ''
         continue-on-error: true
@@ -669,6 +657,24 @@ jobs:
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter
+
+      - name: Rename built .app bundle (Finder/Dock display name)
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          APP=$(find . -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          if [ -n "$APP" ]; then
+            DIR=$(dirname "$APP")
+            NEW="$DIR/${APP_NAME}.app"
+            if [ "$APP" != "$NEW" ]; then
+              mv "$APP" "$NEW"
+            fi
+            PLIST="$NEW/Contents/Info.plist"
+            [ -f "$PLIST" ] && /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" 2>/dev/null
+            [ -f "$PLIST" ] && { /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" 2>/dev/null || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" 2>/dev/null; }
+            echo "Renamed to: $NEW"
+          fi
 
       - name: Ad-hoc sign and package DMG
         shell: bash
