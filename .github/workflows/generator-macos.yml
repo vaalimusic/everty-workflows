@@ -294,6 +294,16 @@ jobs:
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter --package dmg
 
+      - name: Ad-hoc sign app (removes "damaged" error without paid certificate)
+        continue-on-error: true
+        shell: bash
+        run: |
+          APP=$(find . -maxdepth 8 -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          if [ -n "$APP" ]; then
+            codesign --force --deep --sign - "$APP"
+            echo "Signed: $APP"
+          fi
+
       - name: Report progress - uploading
         shell: bash
         run: |
@@ -576,6 +586,16 @@ jobs:
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter --package dmg
+
+      - name: Ad-hoc sign app (removes "damaged" error without paid certificate)
+        continue-on-error: true
+        shell: bash
+        run: |
+          APP=$(find . -maxdepth 8 -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          if [ -n "$APP" ]; then
+            codesign --force --deep --sign - "$APP"
+            echo "Signed: $APP"
+          fi
 
       - name: Report progress - uploading
         shell: bash
