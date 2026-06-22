@@ -292,7 +292,7 @@ jobs:
         shell: bash
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
-          python3 build.py --flutter --dmg
+          python3 build.py --flutter --package dmg
 
       - name: Report progress - uploading
         shell: bash
@@ -575,7 +575,7 @@ jobs:
         shell: bash
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
-          python3 build.py --flutter --dmg
+          python3 build.py --flutter --package dmg
 
       - name: Report progress - uploading
         shell: bash
