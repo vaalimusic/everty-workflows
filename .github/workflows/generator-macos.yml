@@ -198,7 +198,7 @@ jobs:
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
@@ -291,7 +291,7 @@ jobs:
       - name: Build macOS DMG
         shell: bash
         run: |
-          export VCPKG_ROOT=/opt/artifacts/vcpkg
+          export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter --dmg
 
       - name: Report progress - uploading
@@ -483,7 +483,7 @@ jobs:
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
-          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
@@ -574,7 +574,7 @@ jobs:
       - name: Build macOS DMG
         shell: bash
         run: |
-          export VCPKG_ROOT=/opt/artifacts/vcpkg
+          export VCPKG_ROOT=${{ github.workspace }}/vcpkg
           python3 build.py --flutter --dmg
 
       - name: Report progress - uploading
