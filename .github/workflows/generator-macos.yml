@@ -288,21 +288,40 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"progress":"macOS: компилируется (Rust + Flutter, ~40-70 мин)..."}'
 
-      - name: Build macOS DMG
+      - name: Build macOS app
         shell: bash
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
-          python3 build.py --flutter --package dmg
+          python3 build.py --flutter
 
       - name: Ad-hoc sign app (removes "damaged" error without paid certificate)
         continue-on-error: true
         shell: bash
         run: |
-          APP=$(find . -maxdepth 8 -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          APP=$(find flutter/build/macos -name "*.app" | head -1)
           if [ -n "$APP" ]; then
             codesign --force --deep --sign - "$APP"
             echo "Signed: $APP"
           fi
+
+      - name: Package as DMG
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          APP=$(find flutter/build/macos -name "*.app" | head -1)
+          if [ -z "$APP" ]; then
+            echo "No .app bundle found after build"
+            exit 1
+          fi
+          mkdir -p /tmp/dmg-contents
+          cp -r "$APP" /tmp/dmg-contents/
+          ln -s /Applications /tmp/dmg-contents/Applications
+          hdiutil create \
+            -volname "${APP_NAME:-Everty Desk}" \
+            -srcfolder /tmp/dmg-contents \
+            -ov -format UDZO \
+            "${FNAME}.dmg"
+          echo "Created ${FNAME}.dmg"
 
       - name: Report progress - uploading
         shell: bash
@@ -315,16 +334,15 @@ jobs:
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk}"
-          DMG=$(find . -maxdepth 8 -name "*.dmg" | grep -v vcpkg | head -1)
-          if [ -z "$DMG" ]; then
+          DMG="${FNAME}.dmg"
+          if [ ! -f "$DMG" ]; then
             echo "No .dmg file found"
             exit 1
           fi
-          cp "$DMG" "${FNAME}.dmg"
           curl -s -f -X POST \
             "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
-            -F "file=@${FNAME}.dmg"
-          echo "Uploaded ${FNAME}.dmg"
+            -F "file=@${DMG}"
+          echo "Uploaded ${DMG}"
 
       - name: Report failure
         if: failure()
@@ -581,21 +599,40 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"progress":"macOS ARM: компилируется (Rust + Flutter, ~40-70 мин)..."}'
 
-      - name: Build macOS DMG
+      - name: Build macOS app
         shell: bash
         run: |
           export VCPKG_ROOT=${{ github.workspace }}/vcpkg
-          python3 build.py --flutter --package dmg
+          python3 build.py --flutter
 
       - name: Ad-hoc sign app (removes "damaged" error without paid certificate)
         continue-on-error: true
         shell: bash
         run: |
-          APP=$(find . -maxdepth 8 -name "*.app" -not -path "*/vcpkg/*" | head -1)
+          APP=$(find flutter/build/macos -name "*.app" | head -1)
           if [ -n "$APP" ]; then
             codesign --force --deep --sign - "$APP"
             echo "Signed: $APP"
           fi
+
+      - name: Package as DMG
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          APP=$(find flutter/build/macos -name "*.app" | head -1)
+          if [ -z "$APP" ]; then
+            echo "No .app bundle found after build"
+            exit 1
+          fi
+          mkdir -p /tmp/dmg-contents
+          cp -r "$APP" /tmp/dmg-contents/
+          ln -s /Applications /tmp/dmg-contents/Applications
+          hdiutil create \
+            -volname "${APP_NAME:-Everty Desk}" \
+            -srcfolder /tmp/dmg-contents \
+            -ov -format UDZO \
+            "${FNAME}-arm64.dmg"
+          echo "Created ${FNAME}-arm64.dmg"
 
       - name: Report progress - uploading
         shell: bash
@@ -608,12 +645,11 @@ jobs:
         shell: bash
         run: |
           FNAME="${FILE_NAME:-rustdesk}"
-          DMG=$(find . -maxdepth 8 -name "*.dmg" | grep -v vcpkg | head -1)
-          if [ -z "$DMG" ]; then
+          DMG="${FNAME}-arm64.dmg"
+          if [ ! -f "$DMG" ]; then
             echo "No .dmg file found"
             exit 1
           fi
-          cp "$DMG" "${FNAME}-arm64.dmg"
           curl -s -f -X POST \
             "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
             -F "file=@${FNAME}-arm64.dmg"
