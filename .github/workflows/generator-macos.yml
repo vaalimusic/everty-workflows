@@ -264,6 +264,41 @@ jobs:
             sed -i '' -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
           fi
 
+      - name: Set macOS bundle name (Finder/Dock display name)
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          XCCONFIG=./flutter/macos/Runner/Configs/AppInfo.xcconfig
+          PLIST=./flutter/macos/Runner/Info.plist
+          [ -f "$XCCONFIG" ] && sed -i '' "s|^PRODUCT_NAME = .*|PRODUCT_NAME = ${APP_NAME}|" "$XCCONFIG" || true
+          if [ -f "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" || \
+              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" || true
+          fi
+          echo "macOS bundle name set to ${APP_NAME}"
+
+      - name: Generate macOS app icon (.icns)
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          ICNS=$(find ./flutter/macos -name "AppIcon.icns" | head -1)
+          if [ -z "$ICNS" ]; then
+            echo "No AppIcon.icns found, skipping"
+          else
+            rm -rf /tmp/icon.iconset
+            mkdir -p /tmp/icon.iconset
+            for s in 16 32 64 128 256 512; do
+              d=$((s*2))
+              sips -z $s $s ./res/icon.png --out /tmp/icon.iconset/icon_${s}x${s}.png || true
+              sips -z $d $d ./res/icon.png --out /tmp/icon.iconset/icon_${s}x${s}@2x.png || true
+            done
+            iconutil -c icns /tmp/icon.iconset -o /tmp/AppIcon.icns && cp /tmp/AppIcon.icns "$ICNS"
+            echo "Replaced $ICNS"
+          fi
+
       - name: Fix connection delay (address book)
         continue-on-error: true
         shell: bash
@@ -568,6 +603,41 @@ jobs:
           sed -i '' "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs || true
           if [ -f ./libs/hbb_common/src/config.rs ]; then
             sed -i '' -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
+          fi
+
+      - name: Set macOS bundle name (Finder/Dock display name)
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          XCCONFIG=./flutter/macos/Runner/Configs/AppInfo.xcconfig
+          PLIST=./flutter/macos/Runner/Info.plist
+          [ -f "$XCCONFIG" ] && sed -i '' "s|^PRODUCT_NAME = .*|PRODUCT_NAME = ${APP_NAME}|" "$XCCONFIG" || true
+          if [ -f "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleName ${APP_NAME}" "$PLIST" || true
+            /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName ${APP_NAME}" "$PLIST" || \
+              /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string ${APP_NAME}" "$PLIST" || true
+          fi
+          echo "macOS bundle name set to ${APP_NAME}"
+
+      - name: Generate macOS app icon (.icns)
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          ICNS=$(find ./flutter/macos -name "AppIcon.icns" | head -1)
+          if [ -z "$ICNS" ]; then
+            echo "No AppIcon.icns found, skipping"
+          else
+            rm -rf /tmp/icon.iconset
+            mkdir -p /tmp/icon.iconset
+            for s in 16 32 64 128 256 512; do
+              d=$((s*2))
+              sips -z $s $s ./res/icon.png --out /tmp/icon.iconset/icon_${s}x${s}.png || true
+              sips -z $d $d ./res/icon.png --out /tmp/icon.iconset/icon_${s}x${s}@2x.png || true
+            done
+            iconutil -c icns /tmp/icon.iconset -o /tmp/AppIcon.icns && cp /tmp/AppIcon.icns "$ICNS"
+            echo "Replaced $ICNS"
           fi
 
       - name: Fix connection delay (address book)
