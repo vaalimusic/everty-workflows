@@ -128,6 +128,9 @@ jobs:
           cp .github/patches/apply_ab_improvements.py /tmp/everty-patches/apply_ab_improvements.py
           cp .github/patches/apply_ab_hover.py /tmp/everty-patches/apply_ab_hover.py
           cp .github/patches/apply_peer_icons.py /tmp/everty-patches/apply_peer_icons.py
+          cp .github/patches/apply_evrtck.py /tmp/everty-patches/apply_evrtck.py
+          cp .github/codec/evrtck_server.rs /tmp/everty-patches/evrtck_server.rs
+          cp .github/codec/evrtck_client.rs /tmp/everty-patches/evrtck_client.rs
 
       - name: Report running
         shell: bash
@@ -228,6 +231,12 @@ jobs:
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_peer_icons.py
+
+      - name: Apply EVRTCK v2 codec integration
+        if: startsWith(env.VERSION, '1.4.')
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_evrtck.py
 
       - name: Install ImageMagick
         run: |
