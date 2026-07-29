@@ -76,6 +76,71 @@ class AgentService {
 
     Future.delayed(kInitialInboxDelay, _checkInbox);
     _inboxTimer = Timer.periodic(kInboxInterval, (_) => _checkInbox());
+
+    if (_isGenericClient) {
+      Future.delayed(kLoginNudgeDelay, _maybeShowLoginNudge);
+    }
+  }
+
+  // ── Soft login nudge ──────────────────────────────────────────────────────
+  // Generic (unbranded) clients have no company account tied in at build
+  // time — encourages personal users to sign in via Yandex to unlock the
+  // cabinet (address book, session history, Smart Agent), without blocking
+  // ad-hoc use. Shown once ever per install; dismissing it (either button)
+  // marks it seen — this never nags again and never blocks the app.
+  static const Duration kLoginNudgeDelay = Duration(seconds: 6);
+
+  Future<File> _loginNudgeMarkerFile() async {
+    final dir = await getApplicationSupportDirectory();
+    return File('${dir.path}${Platform.pathSeparator}login_nudge_shown');
+  }
+
+  Future<void> _maybeShowLoginNudge() async {
+    try {
+      final marker = await _loginNudgeMarkerFile();
+      if (await marker.exists()) return;
+    } catch (_) {
+      return;
+    }
+    _withContext((ctx) => _showLoginNudgeWithCtx(ctx));
+  }
+
+  void _showLoginNudgeWithCtx(BuildContext ctx) {
+    showDialog(
+      context: ctx,
+      builder: (_) => AlertDialog(
+        title: const Text('Сохраняйте устройства и историю'),
+        content: const Text(
+          'Войдите через Яндекс (кнопка входа в главном меню приложения), '
+          'чтобы сохранять устройства в адресной книге, видеть историю '
+          'сеансов и получать уведомления. Это не обязательно — разовое '
+          'подключение по ID работает и без входа.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _markLoginNudgeShown();
+            },
+            child: const Text('Позже'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _markLoginNudgeShown();
+            },
+            child: const Text('Понятно, где войти'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _markLoginNudgeShown() async {
+    try {
+      final marker = await _loginNudgeMarkerFile();
+      await marker.writeAsString(DateTime.now().toIso8601String());
+    } catch (_) {}
   }
 
   Future<String> _getOrCreateMachineId() async {
@@ -267,6 +332,11 @@ class AgentService {
               showSupportPingDialog(ctx, item as Map<String, dynamic>);
             });
           }
+        } else if (item['type'] == 'connection_alert') {
+          _withContext((ctx) async {
+            await _ackNotification(item['id'].toString());
+            _showConnectionAlert(ctx, item as Map<String, dynamic>);
+          });
         } else {
           _withContext((ctx) async {
             await _ackNotification(item['id'].toString());
@@ -293,7 +363,27 @@ class AgentService {
       final server = (body['server'] as String?) ?? '';
       final key = (body['key'] as String?) ?? '';
       final apiServer = (body['api_server'] as String?) ?? '';
-      _showConfigUpdateDialog(server: server, key: key, apiServer: apiServer);
+      final permanentPassword = (body['permanent_password'] as String?) ?? '';
+
+      if (permanentPassword.isNotEmpty) {
+        try {
+          await bind.mainSetOption('permanent-password', permanentPassword);
+          _withContext((ctx) {
+            if (ctx.mounted) {
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(
+                  content: Text('Постоянный пароль обновлён администратором'),
+                  duration: Duration(seconds: 4),
+                ),
+              );
+            }
+          });
+        } catch (_) {}
+      }
+
+      if (server.isNotEmpty || key.isNotEmpty || apiServer.isNotEmpty) {
+        _showConfigUpdateDialog(server: server, key: key, apiServer: apiServer);
+      }
     } catch (_) {}
   }
 
@@ -827,6 +917,93 @@ class AgentService {
       // Fallback: copy ID to clipboard so the operator can connect manually.
       await Clipboard.setData(ClipboardData(text: peerId));
     }
+  }
+
+  /// Shows a connection alert when an Android client connects to this host.
+  /// On Windows: system toast notification (visible even when app is minimized to tray).
+  /// On other platforms: in-app overlay in top-right corner.
+  void _showConnectionAlert(BuildContext ctx, Map<String, dynamic> item) {
+    final title = item['title'] as String? ?? 'EvertyDesk — входящее подключение';
+    final body = item['body'] as String? ?? 'К вам подключились с мобильного устройства.';
+
+    if (Platform.isWindows) {
+      _showWindowsToast(title, body);
+      return;
+    }
+
+    // Non-Windows: in-app overlay
+    final overlay = Overlay.of(ctx);
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => Positioned(
+        top: 24,
+        right: 24,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1F2937),
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: const [
+                BoxShadow(color: Colors.black26, blurRadius: 14, offset: Offset(0, 4)),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.phone_android_rounded, color: Color(0xFF60A5FA), size: 28),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                      const SizedBox(height: 3),
+                      Text(body,
+                          style: const TextStyle(
+                              color: Color(0xFF9CA3AF), fontSize: 12, height: 1.4)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(entry);
+    Future.delayed(const Duration(seconds: 5), () {
+      try { entry.remove(); } catch (_) {}
+    });
+  }
+
+  /// Fires a Windows system toast notification via PowerShell.
+  /// Works even when the app is minimized to the system tray.
+  void _showWindowsToast(String title, String body) {
+    // Escape single quotes for PowerShell string
+    final safeTitle = title.replaceAll("'", "\\'");
+    final safeBody = body.replaceAll("'", "\\'");
+    final script = r"""
+[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument,Windows.Data.Xml.Dom,ContentType=WindowsRuntime] | Out-Null
+$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
+$xml.SelectSingleNode('//text[@id=1]').InnerText = '""" + safeTitle + r"""'
+$xml.SelectSingleNode('//text[@id=2]').InnerText = '""" + safeBody + r"""'
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('EvertyDesk').Show($toast)
+""";
+    try {
+      Process.start(
+        'powershell',
+        ['-NonInteractive', '-NoProfile', '-Command', script],
+        runInShell: false,
+      );
+    } catch (_) {}
   }
 
   void showSupportRequestDialog(BuildContext ctx) {

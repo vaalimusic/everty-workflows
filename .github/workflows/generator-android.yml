@@ -491,6 +491,24 @@ jobs:
         run: |
           sed -i 's/bind.mainGetLocalOption(key:\s*"show-scam-warning")/"N"/g' ./flutter/lib/mobile/pages/server_page.dart
 
+      - name: Unlock 60fps on Android (patch video FPS cap)
+        continue-on-error: true
+        shell: bash
+        run: |
+          # RustDesk caps Android video FPS at 30 in several places.
+          # Patch all occurrences found in the Dart layer.
+          echo "=== FPS occurrences in flutter/lib ==="
+          grep -rn "fps.*30\|30.*fps\|kFps\|custom-fps\|videoFps\|= 30" ./flutter/lib/ | grep -i fps | head -40
+          # Patch common patterns — continue-on-error keeps build alive if not found
+          # Pattern 1: default fps value in model/common
+          sed -i 's/\bfps = 30\b/fps = 60/g' ./flutter/lib/models/model.dart 2>/dev/null || true
+          sed -i 's/\bfps: 30\b/fps: 60/g' ./flutter/lib/models/model.dart 2>/dev/null || true
+          # Pattern 2: kDefaultFps constant
+          sed -i 's/kDefaultFps = 30/kDefaultFps = 60/g' ./flutter/lib/common.dart 2>/dev/null || true
+          sed -i 's/kFps = 30/kFps = 60/g' ./flutter/lib/common.dart 2>/dev/null || true
+          echo "=== FPS after patch ==="
+          grep -rn "fps.*[0-9]\+" ./flutter/lib/models/model.dart ./flutter/lib/common.dart 2>/dev/null | grep -i fps | head -20
+
       - name: Replace flutter icons
         if: env.ICON_URL != ''
         continue-on-error: true
