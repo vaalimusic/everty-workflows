@@ -122,7 +122,8 @@ jobs:
             libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev libgtk-3-dev \
             libpam0g-dev libpulse-dev libunwind-dev libva-dev libvdpau-dev \
             libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev \
-            libxfixes-dev llvm-dev nasm ninja-build pkg-config wget dpkg-dev
+            libxfixes-dev llvm-dev nasm ninja-build pkg-config wget dpkg-dev \
+            alien
 
       - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
         shell: bash
@@ -352,6 +353,20 @@ jobs:
           cp "$DEB" "${FNAME}.deb"
           echo "✓ ${FNAME}.deb ready ($(du -sh "${FNAME}.deb" | cut -f1))"
 
+      - name: Convert DEB to RPM
+        continue-on-error: true
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          sudo alien --to-rpm --scripts "${FNAME}.deb"
+          RPM=$(find . -maxdepth 1 -name "*.rpm" | head -1)
+          if [ -z "$RPM" ]; then
+            echo "::warning::alien produced no .rpm — skipping RPM artifact for this build"
+          else
+            cp "$RPM" "${FNAME}.rpm"
+            echo "✓ ${FNAME}.rpm ready ($(du -sh "${FNAME}.rpm" | cut -f1))"
+          fi
+
       - name: Report progress - uploading
         shell: bash
         run: |
@@ -368,6 +383,20 @@ jobs:
             -F "file=@${FNAME}.deb"
           echo "Uploaded ${FNAME}.deb"
 
+      - name: Upload RPM to server
+        continue-on-error: true
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          if [ -f "${FNAME}.rpm" ]; then
+            curl -s -f -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${FNAME}.rpm"
+            echo "Uploaded ${FNAME}.rpm"
+          else
+            echo "No ${FNAME}.rpm to upload — skipping"
+          fi
+
       - name: Report failure
         if: failure()
         shell: bash
@@ -375,3 +404,360 @@ jobs:
           curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{\"status\":\"failed\",\"message\":\"Ошибка сборки Linux. Logs: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
+
+  # Native ARM64 build — GitHub's ubuntu-22.04-arm hosted runner is itself
+  # aarch64, so (like the macOS Apple Silicon job in generator-macos.yml)
+  # this is just the host toolchain, no cross-compilation triplet/target
+  # needed. Runs in parallel with build-linux; each job independently POSTs
+  # its own artifact to webhook/save (server tells them apart by filename —
+  # see isArm64Name in client_build_webhook.go).
+  build-linux-arm:
+    name: Build Linux ARM64
+    needs: generate-bridge
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch build params
+        id: params
+        shell: bash
+        run: |
+          GENURL="${{ inputs.genurl || secrets.GENURL }}"
+          TOKEN="${{ inputs.token }}"
+
+          RESPONSE=$(curl -s -f "${GENURL}/admin/client-build/get-params?token=${TOKEN}") || {
+            echo "Failed to fetch build params from ${GENURL}"
+            exit 1
+          }
+
+          echo "APP_NAME=$(echo $RESPONSE | jq -r '.app_name')"              >> $GITHUB_ENV
+          echo "COMPANY_NAME=$(echo $RESPONSE | jq -r '.company_name')"      >> $GITHUB_ENV
+          echo "FILE_NAME=$(echo $RESPONSE | jq -r '.file_name')"            >> $GITHUB_ENV
+          echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                >> $GITHUB_ENV
+          echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                      >> $GITHUB_ENV
+          echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"          >> $GITHUB_ENV
+          echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"        >> $GITHUB_ENV
+          echo "BUILD_TOKEN=${TOKEN}"                                         >> $GITHUB_ENV
+          echo "GENURL_VALUE=${GENURL}"                                       >> $GITHUB_ENV
+
+          CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // "{}"')
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent != false')" >> $GITHUB_ENV
+          echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"   >> $GITHUB_ENV
+          echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"  >> $GITHUB_ENV
+          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"       >> $GITHUB_ENV
+          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')" >> $GITHUB_ENV
+          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"     >> $GITHUB_ENV
+
+      - name: Save agent files before RustDesk checkout
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-agent
+          cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" > /tmp/everty-agent/agent_constants.dart
+
+      - name: Save Everty patches before RustDesk checkout
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-patches
+          cp .github/patches/apply_ab_folders.py /tmp/everty-patches/apply_ab_folders.py
+          cp .github/patches/apply_ab_improvements.py /tmp/everty-patches/apply_ab_improvements.py
+          cp .github/patches/apply_ab_hover.py /tmp/everty-patches/apply_ab_hover.py
+          cp .github/patches/apply_peer_icons.py /tmp/everty-patches/apply_peer_icons.py
+
+      - name: Report running
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"running\",\"run_id\":${GITHUB_RUN_ID},\"progress\":\"Linux ARM64: установка зависимостей...\"}"
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: true
+          swap-storage: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake curl g++ gcc-multilib git imagemagick jq \
+            libayatana-appindicator3-dev libasound2-dev libc6-dev libclang-dev \
+            libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev libgtk-3-dev \
+            libpam0g-dev libpulse-dev libunwind-dev libva-dev libvdpau-dev \
+            libxcb-randr0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxdo-dev \
+            libxfixes-dev llvm-dev nasm ninja-build pkg-config wget dpkg-dev \
+            alien
+
+      - name: Normalize RustDesk version (strip build suffix e.g. 1.4.6.100 -> 1.4.6)
+        shell: bash
+        run: |
+          if [[ "${VERSION}" != "master" && -n "${VERSION}" ]]; then
+            BASE=$(echo "${VERSION}" | grep -Eo '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+            if [[ -n "$BASE" && "$BASE" != "${VERSION}" ]]; then
+              echo "Stripping build suffix: ${VERSION} -> ${BASE}"
+              echo "VERSION=${BASE}" >> $GITHUB_ENV
+            fi
+          fi
+
+      - name: Checkout RustDesk source (tag)
+        if: env.VERSION != 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          ref: refs/tags/${{ env.VERSION }}
+          submodules: recursive
+
+      - name: Checkout RustDesk source (master)
+        if: env.VERSION == 'master'
+        uses: actions/checkout@v4
+        with:
+          repository: rustdesk/rustdesk
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Inject Smart Agent
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cp /tmp/everty-agent/agent_service.dart ./flutter/lib/agent_service.dart
+          cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
+
+          sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, appName: kAppName).ignore();|" ./flutter/lib/main.dart
+          if [ -f ./flutter/lib/desktop/pages/desktop_home_page.dart ]; then
+            sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\n|" ./flutter/lib/desktop/pages/desktop_home_page.dart
+            if [ "${ALLOW_SUPPORT}" == "true" ]; then
+              sed -i "s|buildTip(context),|buildTip(context),\n      Padding(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8), child: TextButton.icon(icon: const Icon(Icons.support_agent, size: 20), label: const Text('Запросить помощь'), style: TextButton.styleFrom(foregroundColor: const Color(0xFF2563EB)), onPressed: () => AgentService.instance.showSupportRequestDialog(context),),),|" ./flutter/lib/desktop/pages/desktop_home_page.dart || true
+              echo "✓ Support-request button injected into desktop_home_page.dart"
+            else
+              echo "ℹ️ Support-request button disabled for this build (allow_support_request=false)"
+            fi
+          fi
+
+      - name: Apply AB folder tags patch
+        if: startsWith(env.VERSION, '1.4.')
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_ab_folders.py
+
+      - name: Apply AB improvements patch (note + copy ID + search)
+        if: startsWith(env.VERSION, '1.4.')
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_ab_improvements.py
+
+      - name: Apply AB hover popup patch
+        if: startsWith(env.VERSION, '1.4.')
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_ab_hover.py
+
+      - name: Apply peer icons patch
+        if: startsWith(env.VERSION, '1.4.')
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_peer_icons.py
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Setup vcpkg with GitHub Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: /opt/artifacts/vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: true
+
+      - name: Install vcpkg dependencies
+        run: |
+          $VCPKG_ROOT/vcpkg install \
+            --triplet arm64-linux \
+            --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install ${{ env.RUST_VERSION }}
+          rustup default ${{ env.RUST_VERSION }}
+          rustup component add rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: rustdesk-lib-cache-linux-arm
+
+      - name: Patch icon
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          wget -T 30 -t 2 -O ./res/icon.png "${ICON_URL}"
+          convert ./res/icon.png -define icon:auto-resize=256,64,48,32,16 ./res/icon.ico || true
+          convert ./res/icon.png -resize 32x32 ./res/32x32.png || true
+          convert ./res/icon.png -resize 64x64 ./res/64x64.png || true
+          convert ./res/icon.png -resize 128x128 ./res/128x128.png || true
+          convert ./res/128x128.png -resize 200% ./res/128x128@2x.png || true
+
+      - name: Replace Flutter icons
+        if: env.ICON_URL != ''
+        continue-on-error: true
+        run: |
+          pushd ./flutter
+          flutter pub get
+          dart run flutter_launcher_icons
+          popd
+
+      - name: Set server, key, and API server
+        continue-on-error: true
+        shell: bash
+        run: |
+          [ -n "${RDSERVER}" ]   && sed -i -e "s|rs-ny.rustdesk.com|${RDSERVER}|" ./libs/hbb_common/src/config.rs
+          [ -n "${RDKEY}" ]      && sed -i -e "s|OeVuKk5nlHiXp+APNn0Y3pC1Iwpwn44JGqrQCsWqmBw=|${RDKEY}|" ./libs/hbb_common/src/config.rs
+          [ -n "${API_SERVER}" ] && sed -i -e "s|https://admin.rustdesk.com|${API_SERVER}|" ./src/common.rs
+
+      - name: Rename app
+        if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'
+        continue-on-error: true
+        shell: bash
+        run: |
+          find ./src/lang -name "*.rs" -exec sed -i "s|RustDesk|${APP_NAME}|g" {} \;
+          sed -i "s|title: 'RustDesk'|title: '${APP_NAME}'|" ./flutter/lib/main.dart
+          [ -n "${COMPANY_NAME}" ] && find ./src/lang -name "*.rs" -exec sed -i "/powered_by_me/s|RustDesk|${COMPANY_NAME}|g" {} \; || true
+          sed -i -e "s|pub const APP_NAME: \&str = \"RustDesk\";|pub const APP_NAME: \&str = \"${APP_NAME}\";|" ./libs/hbb_common/src/config.rs || true
+          sed -i "s|hbb_common::config::APP_NAME.read().unwrap().clone()|\"${APP_NAME}\".to_string()|g" ./src/common.rs || true
+          if [ -f ./libs/hbb_common/src/config.rs ]; then
+            sed -i -E "s|RwLock::new\(\"RustDesk\".to_owned\(\)\)|RwLock::new(\"${APP_NAME}\".to_owned())|g" ./libs/hbb_common/src/config.rs || true
+          fi
+          sed -i -e "s|\"RustDesk\"|\"${APP_NAME}\"|g" ./libs/hbb_common/src/config.rs || true
+
+      - name: Fix connection delay (address book)
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Enable Change ID feature
+        if: env.ALLOW_CHANGE_ID == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i "s|get_local_option(\"allow-change-id\") == \"Y\"|true|g" \
+            ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          sed -i "s|mainGetOption(key: 'allow-change-id') == 'Y'|true|g" \
+            ./flutter/lib/desktop/pages/desktop_setting_page.dart || true
+          echo "allow-change-id enabled (patched desktop_setting_page.dart)"
+
+      - name: Report progress - building
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Linux ARM64: компилируется (Rust + Flutter, ~40-70 мин)..."}'
+
+      - name: Check disk and memory before build
+        shell: bash
+        run: |
+          echo "=== Disk ===" && df -h /
+          echo "=== RAM ===" && free -h
+
+      - name: Enable Flutter Linux desktop
+        shell: bash
+        run: |
+          flutter config --enable-linux-desktop
+          flutter --version
+
+      - name: Build Linux DEB
+        shell: bash
+        run: |
+          export VCPKG_ROOT=/opt/artifacts/vcpkg
+          python3 -u build.py --flutter 2>&1 | tee /tmp/build_out.txt || true
+          # Flutter's Linux build output directory is architecture-specific
+          # (linux/x64 vs linux/arm64) — unlike the x86_64 job, check arm64 here.
+          if [ ! -f "flutter/build/linux/arm64/release/bundle/rustdesk" ]; then
+            echo "::error::Build failed — flutter binary not found at flutter/build/linux/arm64/release/bundle/rustdesk"
+            exit 1
+          fi
+          echo "✓ Flutter binary found"
+
+      - name: Rename DEB
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          DEB=$(find . -maxdepth 3 -name "*.deb" | grep -v vcpkg | grep -v apt | head -1)
+          if [ -z "$DEB" ]; then
+            echo "::error::No .deb found after build — listing deb candidates:"
+            find . -name "*.deb" 2>/dev/null || true
+            exit 1
+          fi
+          cp "$DEB" "${FNAME}-arm64.deb"
+          echo "✓ ${FNAME}-arm64.deb ready ($(du -sh "${FNAME}-arm64.deb" | cut -f1))"
+
+      - name: Convert DEB to RPM
+        continue-on-error: true
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          sudo alien --to-rpm --scripts "${FNAME}-arm64.deb"
+          RPM=$(find . -maxdepth 1 -name "*.rpm" | head -1)
+          if [ -z "$RPM" ]; then
+            echo "::warning::alien produced no .rpm — skipping RPM artifact for this build"
+          else
+            cp "$RPM" "${FNAME}-arm64.rpm"
+            echo "✓ ${FNAME}-arm64.rpm ready ($(du -sh "${FNAME}-arm64.rpm" | cut -f1))"
+          fi
+
+      - name: Report progress - uploading
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"progress":"Linux ARM64: загружается на сервер..."}'
+
+      - name: Upload DEB to server
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          curl -s -f -X POST \
+            "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+            -F "file=@${FNAME}-arm64.deb"
+          echo "Uploaded ${FNAME}-arm64.deb"
+
+      - name: Upload RPM to server
+        continue-on-error: true
+        shell: bash
+        run: |
+          FNAME="${FILE_NAME:-rustdesk}"
+          if [ -f "${FNAME}-arm64.rpm" ]; then
+            curl -s -f -X POST \
+              "${GENURL_VALUE}/admin/client-build/webhook/save?token=${BUILD_TOKEN}" \
+              -F "file=@${FNAME}-arm64.rpm"
+            echo "Uploaded ${FNAME}-arm64.rpm"
+          else
+            echo "No ${FNAME}-arm64.rpm to upload — skipping"
+          fi
+
+      - name: Report failure
+        if: failure()
+        shell: bash
+        run: |
+          curl -s -X POST "${GENURL_VALUE}/admin/client-build/webhook/update?token=${BUILD_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"status\":\"failed\",\"message\":\"Ошибка сборки Linux ARM64. Logs: https://github.com/${{ github.repository }}/actions/runs/${GITHUB_RUN_ID}\"}"
