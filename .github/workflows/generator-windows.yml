@@ -103,6 +103,10 @@ jobs:
           echo "DEFAULT_MANUAL=$(echo $CUSTOM | jq -r '.default_manual // ""')"           >> $GITHUB_ENV
           echo "OVERRIDE_MANUAL=$(echo $CUSTOM | jq -r '.override_manual // ""')"         >> $GITHUB_ENV
           echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent != false')"             >> $GITHUB_ENV
+          # EVRTCK is a codec for a distinct client variant (EvertyDesk
+          # Lite/Next), not the standard EvertyDesk build — off unless a
+          # build explicitly opts in via custom_config.enable_evrtck.
+          echo "ENABLE_EVRTCK=$(echo $CUSTOM | jq -r '.enable_evrtck // false')"           >> $GITHUB_ENV
           echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"              >> $GITHUB_ENV
           echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"             >> $GITHUB_ENV
           echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"        >> $GITHUB_ENV
@@ -233,7 +237,7 @@ jobs:
           python3 /tmp/everty-patches/apply_peer_icons.py
 
       - name: Apply EVRTCK v2 codec integration
-        if: startsWith(env.VERSION, '1.4.')
+        if: startsWith(env.VERSION, '1.4.') && env.ENABLE_EVRTCK == 'true'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_evrtck.py
