@@ -290,6 +290,12 @@ jobs:
         run: |
           sed -i '' -e 's|!key.is_empty()|false|' ./src/client.rs
 
+      - name: Enable recording upload to server
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i '' -e 's|static ref ENABLE: Arc<Mutex<bool>> = Default::default();|static ref ENABLE: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));|' ./src/hbbs_http/record_upload.rs
+
       - name: Enable Change ID feature
         if: env.ALLOW_CHANGE_ID == 'true'
         continue-on-error: true
@@ -633,6 +639,12 @@ jobs:
         shell: bash
         run: |
           sed -i '' -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Enable recording upload to server
+        continue-on-error: true
+        shell: bash
+        run: |
+          sed -i '' -e 's|static ref ENABLE: Arc<Mutex<bool>> = Default::default();|static ref ENABLE: Arc<Mutex<bool>> = Arc::new(Mutex::new(true));|' ./src/hbbs_http/record_upload.rs
 
       - name: Enable Change ID feature
         if: env.ALLOW_CHANGE_ID == 'true'
