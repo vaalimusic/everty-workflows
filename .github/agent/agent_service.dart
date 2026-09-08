@@ -367,7 +367,7 @@ class AgentService {
 
       if (permanentPassword.isNotEmpty) {
         try {
-          await bind.mainSetOption('permanent-password', permanentPassword);
+          await bind.mainSetOption(key: 'permanent-password', value: permanentPassword);
           _withContext((ctx) {
             if (ctx.mounted) {
               ScaffoldMessenger.of(ctx).showSnackBar(
