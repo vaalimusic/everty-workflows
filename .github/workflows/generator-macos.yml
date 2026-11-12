@@ -14,26 +14,27 @@ on:
       version:
         description: 'RustDesk version tag (e.g. 1.4.6) or "master"'
         required: false
-        default: 'master'
+        default: '1.5.3'
         type: string
 
 env:
   RUST_VERSION: "1.81"
   FLUTTER_VERSION: "3.24.5"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_COMMIT_ID_1_5_3: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
-  VERSION: "${{ inputs.version || 'master' }}"
+  VERSION: "${{ inputs.version || '1.5.3' }}"
 
 jobs:
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
     with:
-      version: ${{ inputs.version || 'master' }}
+      version: ${{ inputs.version || '1.5.3' }}
 
   build-macos:
     name: Build macOS Intel x86_64
     needs: generate-bridge
-    runs-on: macos-13
+    runs-on: macos-15-intel
     timeout-minutes: 150
 
     steps:
@@ -195,11 +196,18 @@ jobs:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
+      - name: Apply RustDesk Flutter dropdown fix
+        if: env.VERSION == '1.5.3'
+        shell: bash
+        run: |
+          git -C "$(dirname "$(dirname "$(command -v flutter)")")" apply \
+            "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          vcpkgGitCommitId: ${{ env.VERSION == '1.5.3' && env.VCPKG_COMMIT_ID_1_5_3 || env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
       - name: Install vcpkg dependencies
@@ -394,7 +402,7 @@ jobs:
   build-macos-arm:
     name: Build macOS Apple Silicon (ARM64)
     needs: generate-bridge
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 150
 
     steps:
@@ -547,11 +555,18 @@ jobs:
           channel: "stable"
           flutter-version: ${{ env.FLUTTER_VERSION }}
 
+      - name: Apply RustDesk Flutter dropdown fix
+        if: env.VERSION == '1.5.3'
+        shell: bash
+        run: |
+          git -C "$(dirname "$(dirname "$(command -v flutter)")")" apply \
+            "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+
       - name: Setup vcpkg with GitHub Actions binary cache
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          vcpkgGitCommitId: ${{ env.VERSION == '1.5.3' && env.VCPKG_COMMIT_ID_1_5_3 || env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
       - name: Install vcpkg dependencies

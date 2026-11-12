@@ -14,7 +14,7 @@ on:
       version:
         description: 'RustDesk version tag (e.g. 1.4.6) or "master"'
         required: false
-        default: 'master'
+        default: '1.5.3'
         type: string
 
 env:
@@ -24,13 +24,14 @@ env:
   FLUTTER_VERSION: "3.24.5"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
-  VERSION: "${{ inputs.version || 'master' }}"
+  VCPKG_COMMIT_ID_1_5_3: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VERSION: "${{ inputs.version || '1.5.3' }}"
 
 jobs:
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
     with:
-      version: ${{ inputs.version || 'master' }}
+      version: ${{ inputs.version || '1.5.3' }}
 
   build-windows:
     name: Build Windows Client
@@ -388,7 +389,7 @@ jobs:
         uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: C:\vcpkg
-          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          vcpkgGitCommitId: ${{ env.VERSION == '1.5.3' && env.VCPKG_COMMIT_ID_1_5_3 || env.VCPKG_COMMIT_ID }}
           doNotCache: false
 
       - name: Install vcpkg dependencies
