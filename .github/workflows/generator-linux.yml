@@ -521,7 +521,7 @@ jobs:
         run: |
           mkdir -p /tmp/everty-agent
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" > /tmp/everty-agent/agent_constants.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\nconst String kAppVersion = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" "${VERSION:-1.5.3}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Save Everty patches before RustDesk checkout
         shell: bash
