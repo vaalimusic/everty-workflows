@@ -80,11 +80,34 @@ jobs:
           echo "RDSERVER=$(echo $RESPONSE | jq -r '.server')"                >> $GITHUB_ENV
           echo "RDKEY=$(echo $RESPONSE | jq -r '.key')"                      >> $GITHUB_ENV
           echo "API_SERVER=$(echo $RESPONSE | jq -r '.api_server')"          >> $GITHUB_ENV
-          echo "CUSTOM_TXT=$(echo $RESPONSE | jq -r '.custom')"              >> $GITHUB_ENV
+          CUSTOM=$(echo $RESPONSE | jq -r '.custom_config // .custom // "{}"')
+          echo "CUSTOM_JSON=${CUSTOM}"                                       >> $GITHUB_ENV
+          echo "CUSTOM_TXT=${CUSTOM}"                                        >> $GITHUB_ENV
+          echo "ENABLE_AGENT=$(echo $CUSTOM | jq -r '.enable_agent != false')" >> $GITHUB_ENV
+          echo "SERVICE_KEY=$(echo $RESPONSE | jq -r '.service_key // ""')"   >> $GITHUB_ENV
+          echo "IS_GENERIC=$(echo $RESPONSE | jq -r '.is_generic // false')"  >> $GITHUB_ENV
+          echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"       >> $GITHUB_ENV
+          echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')" >> $GITHUB_ENV
+          echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"     >> $GITHUB_ENV
           echo "ICON_URL=$(echo $RESPONSE | jq -r '.icon_url // ""')"        >> $GITHUB_ENV
           echo "ANDROID_APP_ID=$(echo $RESPONSE | jq -r '.android_app_id // "com.carriez.flutter_hbb"')" >> $GITHUB_ENV
           echo "BUILD_TOKEN=${TOKEN}"                                         >> $GITHUB_ENV
           echo "GENURL_VALUE=${GENURL}"                                       >> $GITHUB_ENV
+
+      - name: Save agent files before RustDesk checkout
+        continue-on-error: true
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-agent
+          cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\nconst String kAppVersion = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" "${VERSION:-1.5.3}" > /tmp/everty-agent/agent_constants.dart
+
+      - name: Save Everty patches before RustDesk checkout
+        shell: bash
+        run: |
+          mkdir -p /tmp/everty-patches
+          cp .github/patches/patch_custom_client.py /tmp/everty-patches/patch_custom_client.py
+          cp .github/patches/generate_custom_config.py /tmp/everty-patches/generate_custom_config.py
 
       - name: Report running
         if: matrix.job.arch == 'aarch64'
@@ -150,6 +173,17 @@ jobs:
         run: |
           git -C "$(dirname "$(dirname "$(command -v flutter)")")" apply \
             "$GITHUB_WORKSPACE/.github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff"
+
+      - name: Inject Smart Agent
+        if: env.ENABLE_AGENT == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          cp /tmp/everty-agent/agent_service.dart ./flutter/lib/agent_service.dart
+          cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
+
+          sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, appName: kAppName, appVersion: kAppVersion).ignore();|" ./flutter/lib/main.dart
 
       - name: Install Android NDK
         id: setup-ndk
@@ -461,10 +495,18 @@ jobs:
           echo "   • Dart:    home_page.dart Server tab condition disabled"
           echo "   • Manifest:no MEDIA_PROJECTION / RECORD_AUDIO / SYSTEM_ALERT_WINDOW"
 
-      - name: Write custom.txt
+      - name: Generate custom.txt and custom_.txt
         shell: bash
         run: |
-          echo -n "${CUSTOM_TXT}" > ./flutter/assets/custom_.txt
+          mkdir -p ./flutter/assets
+          python3 /tmp/everty-patches/generate_custom_config.py \
+            --custom-json "${CUSTOM_JSON}" \
+            --server "${RDSERVER}" \
+            --key "${RDKEY}" \
+            --api-server "${API_SERVER}" \
+            --output ./flutter/assets/custom.txt \
+            --output ./flutter/assets/custom_.txt \
+            --format base64
 
       - name: Rename native library (anti-AV)
         if: env.APP_NAME != '' && env.APP_NAME != 'rustdesk'

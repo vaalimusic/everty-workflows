@@ -24,6 +24,10 @@ class AgentService {
   String? _machineId;
   String? _rustdeskId;       // RustDesk numeric ID, read lazily from config
   String _appName = '';      // branded app name (e.g. "Everty Desk") — controls config dir name, matches APP_NAME in hbb_common
+  String _appVersion = '1.5.3';
+  String? _machineSecret;
+  bool _isBlocked = false;
+  String _blockReason = '';
   bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
@@ -52,12 +56,16 @@ class AgentService {
     bool showPeerList = true,
     bool allowSupportRequest = true, // informational; button injection is build-time
     String appName = '',             // APP_NAME used at build time — controls the config folder name
+    String appVersion = '',          // client version e.g. 1.5.3
   }) async {
     if (apiServer.isEmpty) return;
     _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
     _serviceKey = serviceKey;
     _isGenericClient = isGenericClient;
     _showPeerList = showPeerList;
+    if (appVersion.trim().isNotEmpty) {
+      _appVersion = appVersion.trim();
+    }
     // Normalise: empty / literal "null" / lowercase "rustdesk" all mean the
     // default RustDesk build whose config lives in a folder named "RustDesk".
     final raw = appName.trim();
@@ -65,6 +73,7 @@ class AgentService {
         ? 'RustDesk'
         : raw;
     _machineId = await _getOrCreateMachineId();
+    await _loadMachineSecret();
     // Lazily read the RustDesk numeric ID from the config file.
     // The ID may not be assigned by the relay server yet at startup, so we
     // retry a few times with a delay. Once known, it is included in every
@@ -80,6 +89,40 @@ class AgentService {
     if (_isGenericClient) {
       Future.delayed(kLoginNudgeDelay, _maybeShowLoginNudge);
     }
+  }
+
+  Future<void> _loadMachineSecret() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}machine_secret');
+      if (await file.exists()) {
+        final content = (await file.readAsString()).trim();
+        if (content.isNotEmpty) {
+          _machineSecret = content;
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveMachineSecret(String secret) async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final file = File('${dir.path}${Platform.pathSeparator}machine_secret');
+      await file.writeAsString(secret.trim());
+    } catch (_) {}
+  }
+
+  Map<String, String> _headers([Map<String, String>? extra]) {
+    final h = <String, String>{
+      'Content-Type': 'application/json',
+    };
+    if (_machineSecret != null && _machineSecret!.isNotEmpty) {
+      h['X-Machine-Secret'] = _machineSecret!;
+    }
+    if (extra != null) {
+      h.addAll(extra);
+    }
+    return h;
   }
 
   // ── Soft login nudge ──────────────────────────────────────────────────────
@@ -277,7 +320,7 @@ class AgentService {
     try {
       final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/heartbeat'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({
           'machine_id': _machineId,
           'service_key': _serviceKey ?? '',
@@ -285,10 +328,28 @@ class AgentService {
           'os': Platform.operatingSystem,
           'os_version': Platform.operatingSystemVersion,
           'rustdesk_id': _rustdeskId ?? '', // numeric ID assigned by relay server
+          'app_version': _appVersion,
+          'product': _appName,
+          'supports_secret': true,
         }),
       ).timeout(kHttpTimeout);
       if (resp.statusCode >= 200 && resp.statusCode < 300) {
         _heartbeatFailures = 0;
+        try {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final issuedSecret = data['machine_secret'] as String?;
+          if (issuedSecret != null && issuedSecret.isNotEmpty && issuedSecret != _machineSecret) {
+            _machineSecret = issuedSecret;
+            await _saveMachineSecret(issuedSecret);
+          }
+          final isBlocked = data['blocked'] == true;
+          if (isBlocked) {
+            final reason = (data['block_reason'] as String?) ?? '';
+            _handleDeviceBlocked(reason);
+          } else {
+            _isBlocked = false;
+          }
+        } catch (_) {}
       } else {
         _heartbeatFailures++;
       }
@@ -302,6 +363,34 @@ class AgentService {
     }
   }
 
+  void _handleDeviceBlocked(String reason) {
+    if (_isBlocked) return;
+    _isBlocked = true;
+    _blockReason = reason.isNotEmpty ? reason : 'Доступ заблокирован администратором';
+    _withContext((ctx) {
+      if (!ctx.mounted) return;
+      showDialog(
+        context: ctx,
+        barrierDismissible: false,
+        builder: (_) => AlertDialog(
+          icon: const Icon(Icons.block, color: Colors.red, size: 48),
+          title: const Text('Доступ ограничен'),
+          content: Text(
+            'Администратор заблокировал доступ для данного устройства.\n\n'
+            'Причина: $_blockReason\n\n'
+            'Обратитесь к системному администратору вашей организации.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Понятно'),
+            ),
+          ],
+        ),
+      );
+    });
+  }
+
   Future<void> _checkInbox() async {
     if (_apiServer == null || _machineId == null) return;
     try {
@@ -309,7 +398,7 @@ class AgentService {
         'machine_id': _machineId!,
         'service_key': _serviceKey ?? '',
       });
-      final resp = await http.get(uri).timeout(kHttpTimeout);
+      final resp = await http.get(uri, headers: _headers()).timeout(kHttpTimeout);
       if (resp.statusCode != 200) {
         _inboxFailures++;
         return;
@@ -353,6 +442,7 @@ class AgentService {
     try {
       await http.post(
         Uri.parse('$_apiServer/admin/agent/notification/$id/ack?machine_id=$_machineId'),
+        headers: _headers(),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
   }
@@ -365,23 +455,47 @@ class AgentService {
       final apiServer = (body['api_server'] as String?) ?? '';
       final permanentPassword = (body['permanent_password'] as String?) ?? '';
 
+      bool anyApplied = false;
+
+      if (server.isNotEmpty) {
+        try {
+          await bind.mainSetOption(key: 'custom-rendezvous-server', value: server);
+          anyApplied = true;
+        } catch (_) {}
+      }
+      if (key.isNotEmpty) {
+        try {
+          await bind.mainSetOption(key: 'key', value: key);
+          anyApplied = true;
+        } catch (_) {}
+      }
+      if (apiServer.isNotEmpty) {
+        try {
+          await bind.mainSetOption(key: 'api-server', value: apiServer);
+          _apiServer = apiServer.endsWith('/') ? apiServer.substring(0, apiServer.length - 1) : apiServer;
+          anyApplied = true;
+        } catch (_) {}
+      }
       if (permanentPassword.isNotEmpty) {
         try {
           await bind.mainSetOption(key: 'permanent-password', value: permanentPassword);
-          _withContext((ctx) {
-            if (ctx.mounted) {
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(
-                  content: Text('Постоянный пароль обновлён администратором'),
-                  duration: Duration(seconds: 4),
-                ),
-              );
-            }
-          });
+          anyApplied = true;
         } catch (_) {}
       }
 
-      if (server.isNotEmpty || key.isNotEmpty || apiServer.isNotEmpty) {
+      if (anyApplied) {
+        _withContext((ctx) {
+          if (ctx.mounted) {
+            ScaffoldMessenger.of(ctx).showSnackBar(
+              const SnackBar(
+                content: Text('Настройки сервера успешно обновлены администратором'),
+                duration: Duration(seconds: 4),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        });
+      } else if (server.isNotEmpty || key.isNotEmpty || apiServer.isNotEmpty) {
         _showConfigUpdateDialog(server: server, key: key, apiServer: apiServer);
       }
     } catch (_) {}
@@ -449,7 +563,7 @@ class AgentService {
     try {
       await http.post(
         Uri.parse('$_apiServer/admin/agent/notification/$id/vote?machine_id=$_machineId'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({'vote': vote}),
       ).timeout(const Duration(seconds: 10));
     } catch (_) {}
@@ -638,7 +752,7 @@ class AgentService {
     try {
       final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/support-request'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({
           'machine_id': _machineId,
           'service_key': _serviceKey ?? '',
@@ -696,8 +810,9 @@ class AgentService {
     try {
       final uri = Uri.parse('$_apiServer/admin/agent/operators').replace(queryParameters: {
         'service_key': _serviceKey ?? '',
+        'machine_id': _machineId ?? '',
       });
-      final resp = await http.get(uri).timeout(const Duration(seconds: 10));
+      final resp = await http.get(uri, headers: _headers()).timeout(const Duration(seconds: 10));
       if (resp.statusCode != 200) return [];
       final data = jsonDecode(resp.body) as Map<String, dynamic>;
       final items = (data['items'] as List<dynamic>?) ?? [];
@@ -763,7 +878,7 @@ class AgentService {
     try {
       final resp = await http.post(
         Uri.parse('$_apiServer/admin/agent/support-request/respond'),
-        headers: {'Content-Type': 'application/json'},
+        headers: _headers(),
         body: jsonEncode({
           'machine_id': _machineId,
           'service_key': _serviceKey ?? '',

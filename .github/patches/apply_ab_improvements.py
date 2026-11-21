@@ -101,12 +101,34 @@ NEW_AB_MENU_START = '''class AddressBookPeerCard extends BasePeerCard {
       ),
       _transferFileAction(context),'''
 
-if OLD_AB_MENU_START not in src:
+OLD_153_AB_MENU_START = 'final menuItems = await _buildConnectionMenuItems(context);'
+COPY_ID_ITEM = '''    // Everty: copy peer ID to clipboard
+    menuItems.insert(
+      1,
+      MenuEntryButton<String>(
+        childBuilder: (TextStyle? style) =>
+            Text(translate('Copy ID'), style: style),
+        proc: () {
+          Clipboard.setData(ClipboardData(text: peer.id));
+          BotToast.showText(
+            text: '${translate("Copied")}: ${peer.id}',
+            contentColor: Colors.green.shade700,
+            duration: const Duration(seconds: 2),
+          );
+        },
+        dismissOnClicked: true,
+      ),
+    );'''
+
+if OLD_AB_MENU_START in src:
+    src = src.replace(OLD_AB_MENU_START, NEW_AB_MENU_START, 1)
+    print('  [OK] "Copy ID" added to AddressBookPeerCard context menu (1.4.x style)')
+elif OLD_153_AB_MENU_START in src:
+    src = src.replace(OLD_153_AB_MENU_START, f"{OLD_153_AB_MENU_START}\n{COPY_ID_ITEM}", 1)
+    print('  [OK] "Copy ID" added to AddressBookPeerCard context menu (1.5.x style)')
+else:
     print('WARNING: AddressBookPeerCard._buildMenuItems not found — source may have changed',
           file=sys.stderr)
-else:
-    src = src.replace(OLD_AB_MENU_START, NEW_AB_MENU_START, 1)
-    print('  [OK] "Copy ID" added to AddressBookPeerCard context menu')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Write result

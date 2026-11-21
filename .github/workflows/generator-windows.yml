@@ -123,7 +123,7 @@ jobs:
           cp .github/agent/agent_service.dart /tmp/everty-agent/agent_service.dart
           # APP_NAME controls the config folder name in hbb_common (e.g. "Everty Desk").
           # FILE_NAME is only the exe name — these can differ, so we pass APP_NAME to the agent.
-          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" > /tmp/everty-agent/agent_constants.dart
+          printf "const String kAgentApiServer = '%s';\nconst String kAgentServiceKey = '%s';\nconst bool kIsGenericClient = %s;\nconst bool kShowPeerList = %s;\nconst bool kAllowSupportRequest = %s;\nconst String kAppName = '%s';\nconst String kAppVersion = '%s';\n" "${API_SERVER}" "${SERVICE_KEY}" "${IS_GENERIC}" "${SHOW_PEER_LIST}" "${ALLOW_SUPPORT}" "${APP_NAME:-RustDesk}" "${VERSION:-1.5.3}" > /tmp/everty-agent/agent_constants.dart
 
       - name: Save Everty patches before RustDesk checkout
         shell: bash
@@ -134,6 +134,8 @@ jobs:
           cp .github/patches/apply_ab_hover.py /tmp/everty-patches/apply_ab_hover.py
           cp .github/patches/apply_peer_icons.py /tmp/everty-patches/apply_peer_icons.py
           cp .github/patches/apply_evrtck.py /tmp/everty-patches/apply_evrtck.py
+          cp .github/patches/patch_custom_client.py /tmp/everty-patches/patch_custom_client.py
+          cp .github/patches/generate_custom_config.py /tmp/everty-patches/generate_custom_config.py
           cp .github/codec/evrtck_server.rs /tmp/everty-patches/evrtck_server.rs
           cp .github/codec/evrtck_client.rs /tmp/everty-patches/evrtck_client.rs
 
@@ -191,7 +193,7 @@ jobs:
           cp /tmp/everty-agent/agent_constants.dart ./flutter/lib/agent_constants.dart
 
           sed -i "1s|^|import 'package:flutter_hbb/agent_service.dart';\nimport 'package:flutter_hbb/agent_constants.dart';\n|" ./flutter/lib/main.dart
-          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, appName: kAppName).ignore();|" ./flutter/lib/main.dart
+          sed -i "s|WidgetsFlutterBinding.ensureInitialized();|WidgetsFlutterBinding.ensureInitialized();\n  AgentService.instance.initialize(apiServer: kAgentApiServer, serviceKey: kAgentServiceKey, isGenericClient: kIsGenericClient, showPeerList: kShowPeerList, allowSupportRequest: kAllowSupportRequest, appName: kAppName, appVersion: kAppVersion).ignore();|" ./flutter/lib/main.dart
           # NOTE: We INTENTIONALLY do NOT override navigatorKey here.
           # An earlier attempt rewrote "navigatorKey: Get.key" to point at
           # AgentService.navigatorKey — but RustDesk uses Get.key for ALL
@@ -214,31 +216,31 @@ jobs:
           fi
 
       - name: Apply AB folder tags patch
-        if: startsWith(env.VERSION, '1.4.')
+        if: startsWith(env.VERSION, '1.') || env.VERSION == 'master'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_folders.py
 
       - name: Apply AB improvements patch (note + copy ID + search)
-        if: startsWith(env.VERSION, '1.4.')
+        if: startsWith(env.VERSION, '1.') || env.VERSION == 'master'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_improvements.py
 
       - name: Apply AB hover popup patch
-        if: startsWith(env.VERSION, '1.4.')
+        if: startsWith(env.VERSION, '1.') || env.VERSION == 'master'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_ab_hover.py
 
       - name: Apply peer icons patch
-        if: startsWith(env.VERSION, '1.4.')
+        if: startsWith(env.VERSION, '1.') || env.VERSION == 'master'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_peer_icons.py
 
       - name: Apply EVRTCK v2 codec integration
-        if: startsWith(env.VERSION, '1.4.') && env.ENABLE_EVRTCK == 'true'
+        if: (startsWith(env.VERSION, '1.4.') || startsWith(env.VERSION, '1.5.') || env.VERSION == 'master') && env.ENABLE_EVRTCK == 'true'
         shell: bash
         run: |
           python3 /tmp/everty-patches/apply_evrtck.py
@@ -331,21 +333,24 @@ jobs:
           sed -i -e "s|https://rustdesk.com/download|${DOWNLOAD_LINK}|" ./flutter/lib/desktop/pages/desktop_home_page.dart
           sed -i -e "s|https://rustdesk.com/download|${DOWNLOAD_LINK}|" ./flutter/lib/mobile/pages/connection_page.dart
 
-      - name: Allow custom.txt + remove setup server tip
+      - name: Allow custom client configuration + remove setup server tip
         continue-on-error: true
         shell: pwsh
         run: |
-          for ($i = 1; $i -le 3; $i++) {
-            try {
-              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/allowCustom.py -OutFile allowCustom.py -TimeoutSec 30
-              python allowCustom.py
-              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff -TimeoutSec 30
-              git apply removeSetupServerTip.diff
-              break
-            } catch {
-              if ($i -eq 3) { Write-Host "All retries failed, continuing"; break }
-              Start-Sleep -Seconds 5
+          try {
+            python /tmp/everty-patches/patch_custom_client.py
+            for ($i = 1; $i -le 3; $i++) {
+              try {
+                Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/removeSetupServerTip.diff -OutFile removeSetupServerTip.diff -TimeoutSec 30
+                git apply removeSetupServerTip.diff
+                break
+              } catch {
+                if ($i -eq 3) { Write-Host "Could not download removeSetupServerTip.diff, continuing"; break }
+                Start-Sleep -Seconds 5
+              }
             }
+          } catch {
+            Write-Host "Warning: Failed to apply custom client patches: $_"
           }
 
       - name: Install LLVM and Clang
@@ -600,79 +605,17 @@ jobs:
             cp "$runner_res" ./libs/portable/Runner.res
           fi
 
-      - name: Generate custom_.txt
-        shell: python
+      - name: Generate custom.txt and custom_.txt
+        shell: bash
         run: |
-          import os, json
-
-          def yn(v):
-              return 'Y' if str(v).lower() in ('true','yes','y','1') else 'N'
-
-          cfg = {}
-
-          conn_type = os.environ.get('CONN_TYPE', 'both')
-          if conn_type != 'both':
-              cfg['conn-type'] = conn_type
-
-          if yn(os.environ.get('DISABLE_INSTALL', 'false')) == 'Y':
-              cfg['disable-installation'] = 'Y'
-          if yn(os.environ.get('DISABLE_SETTINGS', 'false')) == 'Y':
-              cfg['disable-settings'] = 'Y'
-
-          perm_pass = os.environ.get('PERM_PASSWORD', '')
-          if perm_pass:
-              cfg['password'] = perm_pass
-
-          cfg['enable-lan-discovery'] = yn(os.environ.get('ENABLE_LAN', 'true'))
-          cfg['allow-auto-disconnect'] = yn(os.environ.get('AUTO_DISCONNECT', 'false'))
-          cfg['allow-change-id'] = yn(os.environ.get('ALLOW_CHANGE_ID', 'true'))
-
-          mode_key = 'override-settings' if os.environ.get('SETTINGS_MODE') == 'override' else 'default-settings'
-          theme_key = 'override-settings' if os.environ.get('THEME_MODE') == 'override' else 'default-settings'
-
-          cfg['override-settings'] = {}
-          cfg['default-settings'] = {}
-
-          theme = os.environ.get('THEME', 'system')
-          if theme != 'system':
-              cfg[theme_key]['theme'] = theme
-
-          cfg[mode_key]['access-mode']                      = os.environ.get('ACCESS_MODE', 'custom')
-          cfg[mode_key]['enable-keyboard']                  = yn(os.environ.get('ENABLE_KB', 'true'))
-          cfg[mode_key]['enable-clipboard']                 = yn(os.environ.get('ENABLE_CB', 'true'))
-          cfg[mode_key]['enable-file-transfer']             = yn(os.environ.get('ENABLE_FT', 'true'))
-          cfg[mode_key]['enable-audio']                     = yn(os.environ.get('ENABLE_AUDIO', 'true'))
-          cfg[mode_key]['enable-tunnel']                    = yn(os.environ.get('ENABLE_TCP', 'true'))
-          cfg[mode_key]['enable-remote-restart']            = yn(os.environ.get('ENABLE_RESTART', 'true'))
-          cfg[mode_key]['enable-record-session']            = yn(os.environ.get('ENABLE_RECORD', 'true'))
-          cfg[mode_key]['enable-block-input']               = yn(os.environ.get('ENABLE_BLOCK', 'true'))
-          cfg[mode_key]['allow-remote-config-modification'] = yn(os.environ.get('ENABLE_REMMOD', 'false'))
-          cfg[mode_key]['direct-server']                    = yn(os.environ.get('ENABLE_DIRECT', 'false'))
-          cfg[mode_key]['verification-method']              = os.environ.get('VERIF_METHOD', 'use-both-passwords')
-          cfg[mode_key]['approve-mode']                     = os.environ.get('APPROVE_MODE', 'password-click')
-          cfg[mode_key]['allow-hide-cm']                    = yn(os.environ.get('HIDE_CM', 'false'))
-          cfg[mode_key]['allow-remove-wallpaper']           = yn(os.environ.get('REMOVE_WALLPAPER', 'true'))
-          cfg[mode_key]['enable-remote-printer']            = yn(os.environ.get('ENABLE_PRINTER', 'true'))
-          cfg[mode_key]['enable-camera']                    = yn(os.environ.get('ENABLE_CAMERA', 'true'))
-          cfg[mode_key]['enable-terminal']                  = yn(os.environ.get('ENABLE_TERMINAL', 'true'))
-
-          for line in os.environ.get('DEFAULT_MANUAL', '').splitlines():
-              if '=' in line:
-                  k, v = line.split('=', 1)
-                  cfg['default-settings'][k.strip()] = v.strip()
-
-          for line in os.environ.get('OVERRIDE_MANUAL', '').splitlines():
-              if '=' in line:
-                  k, v = line.split('=', 1)
-                  cfg['override-settings'][k.strip()] = v.strip()
-
-          if not cfg['default-settings']:
-              del cfg['default-settings']
-          if not cfg['override-settings']:
-              del cfg['override-settings']
-
-          with open('./rustdesk/custom_.txt', 'w') as f:
-              json.dump(cfg, f)
+          python3 /tmp/everty-patches/generate_custom_config.py \
+            --custom-json "${CUSTOM_JSON}" \
+            --server "${RDSERVER}" \
+            --key "${RDKEY}" \
+            --api-server "${API_SERVER}" \
+            --output ./rustdesk/custom_.txt \
+            --output ./rustdesk/custom.txt \
+            --format base64
 
       - name: Report progress - packaging
         shell: bash
