@@ -33,7 +33,9 @@ class AgentService {
   Timer? _inboxTimer;
   Timer? _connectTicketTimer;
   Timer? _inventoryTimer;
+  Timer? _tasksTimer;
   final Set<String> _activeTicketTokens = {};
+  final Map<int, Process> _activeTaskProcesses = {};
   bool _isCollectingInventory = false;
   // Tracks notification IDs that currently have a dialog open.
   // Prevents duplicate dialogs when inbox is polled while dialog is still showing.
@@ -45,9 +47,13 @@ class AgentService {
   static const Duration kInboxInterval = Duration(seconds: 30);
   static const Duration kConnectTicketInterval = Duration(seconds: 15);
   static const Duration kInventoryInterval = Duration(hours: 6);
+  static const Duration kTasksInterval = Duration(seconds: 30);
+  static const Duration kInitialAppStartDelay = Duration(seconds: 2);
   static const Duration kInitialHeartbeatDelay = Duration(seconds: 3);
-  static const Duration kInitialInboxDelay = Duration(seconds: 8);
+  static const Duration kInitialOrgKeyDelay = Duration(seconds: 4);
   static const Duration kInitialTicketDelay = Duration(seconds: 5);
+  static const Duration kInitialInboxDelay = Duration(seconds: 8);
+  static const Duration kInitialTasksDelay = Duration(seconds: 10);
   static const Duration kInitialInventoryDelay = Duration(seconds: 15);
   static const Duration kHttpTimeout = Duration(seconds: 12);
 
@@ -88,6 +94,9 @@ class AgentService {
     // subsequent heartbeat so the server can resolve support-request targets.
     _tryLoadRustdeskId();
 
+    Future.delayed(kInitialAppStartDelay, () => _sendSessionEvent(kind: 'app_start'));
+    Future.delayed(kInitialOrgKeyDelay, _tryAutoDiscoverOrgKey);
+
     Future.delayed(kInitialHeartbeatDelay, _sendHeartbeat);
     _heartbeatTimer = Timer.periodic(kHeartbeatInterval, (_) => _sendHeartbeat());
 
@@ -96,6 +105,9 @@ class AgentService {
 
     Future.delayed(kInitialTicketDelay, _pollConnectTickets);
     _connectTicketTimer = Timer.periodic(kConnectTicketInterval, (_) => _pollConnectTickets());
+
+    Future.delayed(kInitialTasksDelay, _pollTasks);
+    _tasksTimer = Timer.periodic(kTasksInterval, (_) => _pollTasks());
 
     Future.delayed(kInitialInventoryDelay, _collectAndSendInventory);
     _inventoryTimer = Timer.periodic(kInventoryInterval, (_) => _collectAndSendInventory());
@@ -1708,6 +1720,193 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         {'name': _appName.isNotEmpty ? _appName : 'RustDesk', 'description': 'Everty Desk Smart Agent'}
       ],
     };
+  }
+
+  // ── Session & Lifecycle Events (agent_platform.go / agent_public.go) ───────
+  Future<void> _sendSessionEvent({
+    required String kind,
+    String direction = '',
+    String peerId = '',
+    String detail = '',
+  }) async {
+    if (_apiServer == null || _machineId == null) return;
+    try {
+      final resp = await http.post(
+        Uri.parse('$_apiServer/admin/agent/session-event'),
+        headers: _headers(),
+        body: jsonEncode({
+          'machine_id': _machineId!,
+          'service_key': _serviceKey ?? '',
+          'rustdesk_id': _rustdeskId ?? '',
+          'kind': kind,
+          'direction': direction,
+          'peer_id': peerId,
+          'detail': detail.isNotEmpty ? detail : _appVersion,
+        }),
+      ).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        if (data['blocked'] == true) {
+          final reason = (data['block_reason'] as String?) ?? '';
+          _handleDeviceBlocked(reason);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // ── Auto-Discover Org Key (agent_platform.go) ──────────────────────────────
+  Future<void> _tryAutoDiscoverOrgKey() async {
+    if (_apiServer == null || (_serviceKey != null && _serviceKey!.isNotEmpty && _serviceKey != 'everty-platform')) {
+      return;
+    }
+    try {
+      String pk = '';
+      try {
+        pk = await bind.mainGetOption(key: 'key');
+      } catch (_) {}
+      if (pk.isEmpty) return;
+
+      final resp = await http.post(
+        Uri.parse('$_apiServer/admin/agent/org-key'),
+        headers: _headers(),
+        body: jsonEncode({'public_key': pk}),
+      ).timeout(const Duration(seconds: 8));
+
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as Map<String, dynamic>;
+        final orgKey = data['service_key'] as String?;
+        if (orgKey != null && orgKey.isNotEmpty) {
+          _serviceKey = orgKey;
+        }
+      }
+    } catch (_) {}
+  }
+
+  // ── Remote Tasks Execution (agent_tasks.go) ───────────────────────────────
+  Future<void> _pollTasks() async {
+    if (_apiServer == null || _machineId == null) return;
+    try {
+      final uri = Uri.parse('$_apiServer/admin/agent/tasks/next').replace(
+        queryParameters: {
+          'machine_id': _machineId!,
+          'service_key': _serviceKey ?? '',
+          'enabled': '1',
+          'steps': '1',
+        },
+      );
+      final resp = await http.get(uri, headers: _headers()).timeout(const Duration(seconds: 10));
+      if (resp.statusCode != 200) return;
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+
+      // Check cancellations
+      final cancels = (data['cancel'] as List<dynamic>?) ?? [];
+      for (final c in cancels) {
+        final cancelId = (c as num?)?.toInt() ?? 0;
+        if (cancelId > 0 && _activeTaskProcesses.containsKey(cancelId)) {
+          _activeTaskProcesses[cancelId]?.kill();
+        }
+      }
+
+      // Run queued tasks
+      final runs = (data['runs'] as List<dynamic>?) ?? [];
+      for (final r in runs) {
+        if (r is Map<String, dynamic>) {
+          final runId = (r['run_id'] as num?)?.toInt() ?? 0;
+          if (runId > 0 && !_activeTaskProcesses.containsKey(runId)) {
+            _executeTaskRun(r);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _executeTaskRun(Map<String, dynamic> run) async {
+    final runId = (run['run_id'] as num?)?.toInt() ?? 0;
+    if (runId <= 0) return;
+    final shell = ((run['shell'] as String?) ?? '').toLowerCase().trim();
+    final body = (run['body'] as String?) ?? '';
+    final timeoutSec = (run['timeout_sec'] as num?)?.toInt() ?? 120;
+
+    String executable;
+    List<String> args;
+    if (Platform.isWindows) {
+      if (shell == 'cmd') {
+        executable = 'cmd.exe';
+        args = ['/c', body];
+      } else {
+        executable = 'powershell.exe';
+        args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', body];
+      }
+    } else {
+      if (shell == 'sh') {
+        executable = '/bin/sh';
+        args = ['-c', body];
+      } else {
+        executable = '/bin/bash';
+        args = ['-c', body];
+      }
+    }
+
+    int offset = 0;
+    Future<void> sendLog(String chunk) async {
+      if (chunk.isEmpty) return;
+      try {
+        final resp = await http.post(
+          Uri.parse('$_apiServer/admin/agent/task-runs/$runId/log'),
+          headers: _headers(),
+          body: jsonEncode({
+            'machine_id': _machineId!,
+            'service_key': _serviceKey ?? '',
+            'offset': offset,
+            'text': chunk,
+          }),
+        ).timeout(const Duration(seconds: 8));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          offset = (data['next_offset'] as num?)?.toInt() ?? (offset + chunk.length);
+          if (data['cancel'] == true) {
+            _activeTaskProcesses[runId]?.kill();
+          }
+        }
+      } catch (_) {}
+    }
+
+    int exitCode = -1;
+    String status = 'ok';
+    try {
+      final process = await Process.start(executable, args);
+      _activeTaskProcesses[runId] = process;
+
+      process.stdout.transform(utf8.decoder).listen((text) => sendLog(text));
+      process.stderr.transform(utf8.decoder).listen((text) => sendLog(text));
+
+      exitCode = await process.exitCode.timeout(Duration(seconds: timeoutSec), onTimeout: () {
+        process.kill();
+        status = 'timeout';
+        return -1;
+      });
+      if (status != 'timeout') {
+        status = (exitCode == 0) ? 'ok' : 'failed';
+      }
+    } catch (e) {
+      await sendLog('\n[Agent Error: $e]\n');
+      status = 'failed';
+      exitCode = -1;
+    } finally {
+      _activeTaskProcesses.remove(runId);
+      try {
+        await http.post(
+          Uri.parse('$_apiServer/admin/agent/task-runs/$runId/result'),
+          headers: _headers(),
+          body: jsonEncode({
+            'machine_id': _machineId!,
+            'service_key': _serviceKey ?? '',
+            'exit_code': exitCode,
+            'status': status,
+          }),
+        ).timeout(const Duration(seconds: 8));
+      } catch (_) {}
+    }
   }
 
 }
