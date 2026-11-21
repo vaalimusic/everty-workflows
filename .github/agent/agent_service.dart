@@ -31,6 +31,10 @@ class AgentService {
   bool _showPeerList = true; // show operator list in help dialog
   Timer? _heartbeatTimer;
   Timer? _inboxTimer;
+  Timer? _connectTicketTimer;
+  Timer? _inventoryTimer;
+  final Set<String> _activeTicketTokens = {};
+  bool _isCollectingInventory = false;
   // Tracks notification IDs that currently have a dialog open.
   // Prevents duplicate dialogs when inbox is polled while dialog is still showing.
   final Set<String> _activePingDialogIds = {};
@@ -39,8 +43,12 @@ class AgentService {
   // Lower values = more responsive support flow but more server load.
   static const Duration kHeartbeatInterval = Duration(minutes: 1);
   static const Duration kInboxInterval = Duration(seconds: 30);
+  static const Duration kConnectTicketInterval = Duration(seconds: 15);
+  static const Duration kInventoryInterval = Duration(hours: 6);
   static const Duration kInitialHeartbeatDelay = Duration(seconds: 3);
   static const Duration kInitialInboxDelay = Duration(seconds: 8);
+  static const Duration kInitialTicketDelay = Duration(seconds: 5);
+  static const Duration kInitialInventoryDelay = Duration(seconds: 15);
   static const Duration kHttpTimeout = Duration(seconds: 12);
 
   /// Tracks consecutive failures for backoff. Reset on success.
@@ -85,6 +93,12 @@ class AgentService {
 
     Future.delayed(kInitialInboxDelay, _checkInbox);
     _inboxTimer = Timer.periodic(kInboxInterval, (_) => _checkInbox());
+
+    Future.delayed(kInitialTicketDelay, _pollConnectTickets);
+    _connectTicketTimer = Timer.periodic(kConnectTicketInterval, (_) => _pollConnectTickets());
+
+    Future.delayed(kInitialInventoryDelay, _collectAndSendInventory);
+    _inventoryTimer = Timer.periodic(kInventoryInterval, (_) => _collectAndSendInventory());
 
     if (_isGenericClient) {
       Future.delayed(kLoginNudgeDelay, _maybeShowLoginNudge);
@@ -1417,6 +1431,283 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         ],
       ),
     );
+  }
+
+  // ── One-time Connect Tickets (agent_connect_tickets.go) ───────────────────
+  Future<void> _pollConnectTickets() async {
+    if (_apiServer == null || _machineId == null) return;
+    try {
+      final uri = Uri.parse('$_apiServer/admin/agent/connect-tickets/pending').replace(
+        queryParameters: {
+          'machine_id': _machineId!,
+          'service_key': _serviceKey ?? '',
+          'enabled': '1',
+        },
+      );
+      final resp = await http.get(uri, headers: _headers()).timeout(const Duration(seconds: 8));
+      if (resp.statusCode != 200) return;
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final tickets = (data['tickets'] as List<dynamic>?) ?? [];
+      for (final t in tickets) {
+        final token = (t['token'] as String?) ?? '';
+        final expiresIn = (t['expires_in'] as num?)?.toInt() ?? 120;
+        if (token.isNotEmpty && !_activeTicketTokens.contains(token)) {
+          _activeTicketTokens.add(token);
+          await _applyConnectTicket(token, expiresIn);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _applyConnectTicket(String token, int expiresIn) async {
+    try {
+      await bind.mainSetOption(key: 'temporary-password', value: token);
+      await bind.mainSetOption(key: 'password', value: token);
+    } catch (_) {}
+
+    Timer(Duration(seconds: max(5, expiresIn)), () async {
+      await _consumeConnectTicket(token);
+    });
+  }
+
+  Future<void> _consumeConnectTicket(String token) async {
+    _activeTicketTokens.remove(token);
+    if (_apiServer == null || _machineId == null) return;
+    try {
+      await http.post(
+        Uri.parse('$_apiServer/admin/agent/connect-tickets/consumed'),
+        headers: _headers(),
+        body: jsonEncode({
+          'machine_id': _machineId!,
+          'service_key': _serviceKey ?? '',
+          'token': token,
+        }),
+      ).timeout(const Duration(seconds: 8));
+    } catch (_) {}
+  }
+
+  // ── Hardware & Software Inventory Collection (agent_inventory.go) ─────────
+  Future<void> _collectAndSendInventory() async {
+    if (_apiServer == null || _machineId == null || _isCollectingInventory) return;
+    _isCollectingInventory = true;
+    try {
+      final inventory = await _gatherSystemInventory();
+      final body = jsonEncode({
+        'machine_id': _machineId!,
+        'service_key': _serviceKey ?? '',
+        'inventory': inventory,
+      });
+      await http.post(
+        Uri.parse('$_apiServer/admin/agent/inventory'),
+        headers: _headers(),
+        body: body,
+      ).timeout(const Duration(seconds: 20));
+    } catch (_) {} finally {
+      _isCollectingInventory = false;
+    }
+  }
+
+  Future<Map<String, dynamic>> _gatherSystemInventory() async {
+    String cpuModel = '';
+    int cpuCores = Platform.numberOfProcessors;
+    int memoryMb = 0;
+    final volumes = <Map<String, dynamic>>[];
+    final software = <Map<String, String>>[];
+    final nics = <Map<String, dynamic>>[];
+
+    // 1. Network adapters via Dart io
+    try {
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.any,
+      ).timeout(const Duration(seconds: 4));
+      for (final iface in interfaces) {
+        final ips = iface.addresses
+            .map((a) => a.address)
+            .where((ip) => !ip.startsWith('127.'))
+            .toList();
+        if (ips.isNotEmpty) {
+          nics.add({
+            'name': iface.name,
+            'mac': '',
+            'ips': ips,
+          });
+        }
+      }
+    } catch (_) {}
+
+    // 2. Platform-specific hardware & software collection
+    if (Platform.isWindows) {
+      cpuModel = Platform.environment['PROCESSOR_IDENTIFIER'] ?? '';
+      try {
+        final psRes = await Process.run('powershell', [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '(Get-CimInstance Win32_Processor).Name; (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize',
+        ]).timeout(const Duration(seconds: 5));
+        if (psRes.exitCode == 0) {
+          final lines = psRes.stdout
+              .toString()
+              .split(RegExp(r'\r?\n'))
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .toList();
+          if (lines.isNotEmpty) {
+            cpuModel = lines[0];
+          }
+          if (lines.length > 1) {
+            final kb = int.tryParse(lines[1]) ?? 0;
+            if (kb > 0) memoryMb = kb ~/ 1024;
+          }
+        }
+      } catch (_) {}
+
+      // Fast registry query for installed software
+      try {
+        final regRes = await Process.run('reg', [
+          'query',
+          r'HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+          '/s',
+          '/v',
+          'DisplayName',
+        ]).timeout(const Duration(seconds: 4));
+        if (regRes.exitCode == 0) {
+          final lines = regRes.stdout.toString().split(RegExp(r'\r?\n'));
+          for (final line in lines) {
+            if (line.contains('DisplayName') && line.contains('REG_SZ')) {
+              final parts = line.split('REG_SZ');
+              if (parts.length > 1) {
+                final name = parts[1].trim();
+                if (name.isNotEmpty && software.length < 500) {
+                  software.add({'name': name, 'version': '', 'publisher': ''});
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    } else if (Platform.isLinux) {
+      // Direct file reads for CPU & RAM
+      try {
+        final cpuInfo = await File('/proc/cpuinfo').readAsString();
+        for (final line in cpuInfo.split('\n')) {
+          if (line.startsWith('model name')) {
+            final parts = line.split(':');
+            if (parts.length > 1) {
+              cpuModel = parts[1].trim();
+              break;
+            }
+          }
+        }
+      } catch (_) {}
+
+      try {
+        final memInfo = await File('/proc/meminfo').readAsString();
+        for (final line in memInfo.split('\n')) {
+          if (line.startsWith('MemTotal:')) {
+            final parts = line.split(RegExp(r'\s+'));
+            if (parts.length > 1) {
+              final kb = int.tryParse(parts[1]) ?? 0;
+              if (kb > 0) memoryMb = kb ~/ 1024;
+            }
+            break;
+          }
+        }
+      } catch (_) {}
+
+      // Packages list
+      try {
+        final dpkg = await Process.run('dpkg-query', ['-W', '-f=\${Package}\t\${Version}\n'])
+            .timeout(const Duration(seconds: 4));
+        if (dpkg.exitCode == 0) {
+          for (final line in dpkg.stdout.toString().split('\n')) {
+            final parts = line.split('\t');
+            if (parts.isNotEmpty && parts[0].trim().isNotEmpty && software.length < 500) {
+              software.add({
+                'name': parts[0].trim(),
+                'version': parts.length > 1 ? parts[1].trim() : '',
+                'publisher': '',
+              });
+            }
+          }
+        } else {
+          final rpm = await Process.run('rpm', ['-qa', '--qf', '%{NAME}\t%{VERSION}\n'])
+              .timeout(const Duration(seconds: 4));
+          if (rpm.exitCode == 0) {
+            for (final line in rpm.stdout.toString().split('\n')) {
+              final parts = line.split('\t');
+              if (parts.isNotEmpty && parts[0].trim().isNotEmpty && software.length < 500) {
+                software.add({
+                  'name': parts[0].trim(),
+                  'version': parts.length > 1 ? parts[1].trim() : '',
+                  'publisher': '',
+                });
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    } else if (Platform.isMacOS) {
+      try {
+        final cpuRes = await Process.run('sysctl', ['-n', 'machdep.cpu.brand_string'])
+            .timeout(const Duration(seconds: 3));
+        if (cpuRes.exitCode == 0) cpuModel = cpuRes.stdout.toString().trim();
+      } catch (_) {}
+
+      try {
+        final memRes = await Process.run('sysctl', ['-n', 'hw.memsize'])
+            .timeout(const Duration(seconds: 3));
+        if (memRes.exitCode == 0) {
+          final bytes = int.tryParse(memRes.stdout.toString().trim()) ?? 0;
+          if (bytes > 0) memoryMb = (bytes ~/ (1024 * 1024));
+        }
+      } catch (_) {}
+
+      try {
+        final appsDir = Directory('/Applications');
+        if (await appsDir.exists()) {
+          await for (final entity in appsDir.list()) {
+            if (entity is Directory && entity.path.endsWith('.app')) {
+              final base = entity.path.split('/').last.replaceAll('.app', '');
+              if (software.length < 500) {
+                software.add({'name': base, 'version': '', 'publisher': 'Apple/Third-party'});
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    return {
+      'schema': 1,
+      'collected_at': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      'hardware': {
+        'vendor': '',
+        'model': Platform.localHostname,
+        'bios': '',
+        'cpu': {
+          'model': cpuModel,
+          'cores': cpuCores,
+          'threads': cpuCores,
+        },
+        'memory_mb': memoryMb,
+        'os': {
+          'name': Platform.operatingSystem,
+          'version': Platform.operatingSystemVersion,
+          'kernel': '',
+          'arch': Platform.version.contains('arm') ? 'arm64' : 'x86_64',
+        },
+        'disks': [],
+        'volumes': volumes,
+        'gpus': [],
+        'nics': nics,
+      },
+      'software': software,
+      'services': [
+        {'name': _appName.isNotEmpty ? _appName : 'RustDesk', 'description': 'Everty Desk Smart Agent'}
+      ],
+    };
   }
 
 }

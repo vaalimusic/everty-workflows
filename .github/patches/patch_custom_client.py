@@ -88,6 +88,19 @@ def patch_file(path):
         modified = True
         print("✓ Enabled debug assertion fallback for custom_.txt")
 
+    # ── 3. Neutralize upstream update check in do_check_software_update ───────
+    update_pattern = re.compile(
+        r'(pub async fn do_check_software_update\(\) -> hbb_common::ResultType<\(\)> \{)(\r?\n)'
+    )
+    if update_pattern.search(content) and 'EVERTY_DISABLE_UPSTREAM_UPDATE_CHECK' not in content:
+        content = update_pattern.sub(
+            r'\1\2    if option_env!("EVERTY_DISABLE_UPSTREAM_UPDATE_CHECK").is_some() || true {\2        return Ok(());\2    }\2',
+            content,
+            count=1
+        )
+        modified = True
+        print("✓ Disabled upstream update checks in do_check_software_update")
+
     if modified:
         with open(path, 'w', encoding='utf-8') as f:
             f.write(content)

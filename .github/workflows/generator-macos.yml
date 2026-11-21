@@ -70,6 +70,10 @@ jobs:
           echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"       >> $GITHUB_ENV
           echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')" >> $GITHUB_ENV
           echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"     >> $GITHUB_ENV
+          echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // "https://rustdesk.com"')"   >> $GITHUB_ENV
+          echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // "https://rustdesk.com/download"')" >> $GITHUB_ENV
+          echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
+          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif != false')" >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
@@ -92,6 +96,8 @@ jobs:
           cp .github/patches/apply_peer_icons.py /tmp/everty-patches/apply_peer_icons.py
           cp .github/patches/patch_custom_client.py /tmp/everty-patches/patch_custom_client.py
           cp .github/patches/generate_custom_config.py /tmp/everty-patches/generate_custom_config.py
+          cp .github/patches/apply_branding_links.py /tmp/everty-patches/apply_branding_links.py
+          cp .github/patches/xoffline.py /tmp/everty-patches/xoffline.py
 
       - name: Report running
         shell: bash
@@ -320,6 +326,22 @@ jobs:
         run: |
           sed -i '' -e 's|!key.is_empty()|false|' ./src/client.rs
 
+      - name: Apply branding URLs and notification suppression
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_branding_links.py \
+            --url-link "${URL_LINK}" \
+            --download-link "${DOWNLOAD_LINK}" \
+            $( [ "$REMOVE_NOTIF" = "true" ] && echo "--remove-notif" )
+
+      - name: Use X for offline display
+        if: env.X_OFFLINE == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/xoffline.py
+
       - name: Enable recording upload to server
         continue-on-error: true
         shell: bash
@@ -464,6 +486,10 @@ jobs:
           echo "SHOW_PEER_LIST=$(echo $CUSTOM | jq -r '.show_peer_list != false')"       >> $GITHUB_ENV
           echo "ALLOW_SUPPORT=$(echo $CUSTOM | jq -r '.allow_support_request != false')" >> $GITHUB_ENV
           echo "ALLOW_CHANGE_ID=$(echo $CUSTOM | jq -r '.allow_change_id != false')"     >> $GITHUB_ENV
+          echo "URL_LINK=$(echo $CUSTOM | jq -r '.url_link // "https://rustdesk.com"')"   >> $GITHUB_ENV
+          echo "DOWNLOAD_LINK=$(echo $CUSTOM | jq -r '.download_link // "https://rustdesk.com/download"')" >> $GITHUB_ENV
+          echo "X_OFFLINE=$(echo $CUSTOM | jq -r '.x_offline // false')"                  >> $GITHUB_ENV
+          echo "REMOVE_NOTIF=$(echo $CUSTOM | jq -r '.remove_new_version_notif != false')" >> $GITHUB_ENV
 
       - name: Save agent files before RustDesk checkout
         if: env.ENABLE_AGENT == 'true'
@@ -486,6 +512,8 @@ jobs:
           cp .github/patches/apply_peer_icons.py /tmp/everty-patches/apply_peer_icons.py
           cp .github/patches/patch_custom_client.py /tmp/everty-patches/patch_custom_client.py
           cp .github/patches/generate_custom_config.py /tmp/everty-patches/generate_custom_config.py
+          cp .github/patches/apply_branding_links.py /tmp/everty-patches/apply_branding_links.py
+          cp .github/patches/xoffline.py /tmp/everty-patches/xoffline.py
 
       - name: Report running
         shell: bash
@@ -702,6 +730,22 @@ jobs:
         shell: bash
         run: |
           sed -i '' -e 's|!key.is_empty()|false|' ./src/client.rs
+
+      - name: Apply branding URLs and notification suppression
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/apply_branding_links.py \
+            --url-link "${URL_LINK}" \
+            --download-link "${DOWNLOAD_LINK}" \
+            $( [ "$REMOVE_NOTIF" = "true" ] && echo "--remove-notif" )
+
+      - name: Use X for offline display
+        if: env.X_OFFLINE == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          python3 /tmp/everty-patches/xoffline.py
 
       - name: Enable recording upload to server
         continue-on-error: true

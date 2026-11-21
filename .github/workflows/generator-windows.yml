@@ -493,18 +493,9 @@ jobs:
       - name: Use X for offline display
         if: env.X_OFFLINE == 'true'
         continue-on-error: true
-        shell: pwsh
+        shell: bash
         run: |
-          for ($i = 1; $i -le 3; $i++) {
-            try {
-              Invoke-WebRequest -Uri https://raw.githubusercontent.com/bryangerlach/rdgen/refs/heads/master/.github/patches/xoffline.diff -OutFile xoffline.diff -TimeoutSec 30
-              git apply xoffline.diff
-              break
-            } catch {
-              if ($i -eq 3) { Write-Host "xoffline patch failed, continuing"; break }
-              Start-Sleep -Seconds 5
-            }
-          }
+          python3 .github/patches/xoffline.py
 
       - name: Remove new version notification
         if: env.REMOVE_NOTIF == 'true'
