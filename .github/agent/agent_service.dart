@@ -453,11 +453,8 @@ class AgentService {
             _showConnectionAlert(ctx, item as Map<String, dynamic>);
           });
         } else if (item['type'] == 'entitlements_changed') {
-          // Tariff or subscription changed on server — ack notification and sync config
+          // Tariff or subscription changed on server — ack notification
           await _ackNotification(item['id'].toString());
-          try {
-            await bind.mainSyncConfig();
-          } catch (_) {}
         } else {
           _withContext((ctx) async {
             await _ackNotification(item['id'].toString());
